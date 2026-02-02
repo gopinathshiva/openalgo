@@ -17,12 +17,18 @@ instance/
 Thumbs.db
 .vscode/
 .idea/
+.claude/settings.json
+.claude/settings.local.json
 .python-version
 config.ini
 .venvv
 .cloudflared/*.json
 
 #DB Files, CSV Files and Log/Tmp Files
+
+# Numba/LLVMLITE cache directories (auto-created on Linux)
+.numba_cache/
+.llvm_tmp/
 
 *.egg-info/
 *.db
@@ -43,14 +49,14 @@ db/strategy_encryption.key
 !all_symbols.csv
 !data/qtyfreeze.csv
 
-# Environments 
-.env 
-.venv 
-env/ 
-venv/ 
-ENV/ 
-env.bak/ 
-venv.bak/ 
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
 
 # Node modules (all directories)
 node_modules/
@@ -58,13 +64,13 @@ node_modules/
 
 # Build output
 dist/
-!frontend/dist/
 build/
 .next/
 out/
 
 # Frontend specific
-# frontend/dist/ is INCLUDED - pre-built for community used
+# frontend/dist/ is built by CI/CD pipeline
+frontend/dist/
 frontend/.cache/
 *.local
 
@@ -76,3 +82,10 @@ frontend/.cache/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+#frontend/dist
+frontend/dist/
+#frontend/dist
+
+# Windows NUL file
+nul

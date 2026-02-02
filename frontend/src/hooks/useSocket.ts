@@ -128,6 +128,7 @@ export function useSocket() {
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
       timeout: 20000,
+      forceNew: true, // Always create new session to avoid "Invalid session" errors on reconnect
     })
 
     const socket = socketRef.current
@@ -142,6 +143,15 @@ export function useSocket() {
     socket.on('master_contract_download', (data: MasterContractData) => {
       playAlertSound()
       toast.info(`Master Contract: ${data.message}`)
+    })
+
+    // Share credentials notification (post broker login)
+    socket.on('share_credentials_status', (data: { status: string; message: string }) => {
+      if (data.status === 'success') {
+        toast.success(data.message)
+      } else {
+        toast.error(data.message)
+      }
     })
 
     // Cancel order notification - only play sound, UI handles toast

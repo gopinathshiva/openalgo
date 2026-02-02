@@ -15,6 +15,7 @@ export interface PriceableItem {
   pnlpercent?: number
   quantity?: number
   average_price?: number
+  today_realized_pnl?: number  // Sandbox: today's realized P&L from closed partial trades
 }
 
 /**
@@ -80,6 +81,11 @@ export function useLivePrice<T extends PriceableItem>(
   const { isMarketOpen, isAnyMarketOpen } = useMarketStatus()
   const anyMarketOpen = isAnyMarketOpen()
 
+  const debugLivePrice =
+    typeof window !== 'undefined' &&
+    (window.localStorage.getItem('debug_live_price') === '1' ||
+      window.localStorage.getItem('debug_live_price') === 'true')
+
   // State for MultiQuotes fallback data
   const [multiQuotes, setMultiQuotes] = useState<Map<string, QuotesData>>(new Map())
 
@@ -115,7 +121,23 @@ export function useLivePrice<T extends PriceableItem>(
         exchange: item.exchange,
       }))
 
+      if (debugLivePrice) {
+        console.debug('[useLivePrice] MultiQuotes request', {
+          count: symbolsList.length,
+          sample: symbolsList.slice(0, 5),
+        })
+      }
+
       const response = await tradingApi.getMultiQuotes(apiKey, symbolsList)
+
+      if (debugLivePrice) {
+        console.debug('[useLivePrice] MultiQuotes response', {
+          status: response.status,
+          resultsCount: response.results?.length ?? 0,
+          message: response.message,
+          sampleKeys: response.results?.slice(0, 5).map((r) => `${r.exchange}:${r.symbol}`) ?? [],
+        })
+      }
 
       if (response.status === 'success' && response.results) {
         const quotesMap = new Map<string, QuotesData>()
@@ -125,17 +147,35 @@ export function useLivePrice<T extends PriceableItem>(
             quotesMap.set(key, result.data)
           }
         })
+
+        if (debugLivePrice) {
+          console.debug('[useLivePrice] MultiQuotes mapped', {
+            mappedCount: quotesMap.size,
+          })
+        }
+
         setMultiQuotes(quotesMap)
       }
-    } catch {
+    } catch (err) {
       // Silently fail - MultiQuotes is a fallback mechanism
-      console.debug('MultiQuotes fetch failed, using cached/REST data')
+      if (debugLivePrice) {
+        console.debug('[useLivePrice] MultiQuotes fetch failed', err)
+      }
     }
   }, [apiKey, items, useMultiQuotesFallback])
 
   // Fetch MultiQuotes on mount and when items change
   useEffect(() => {
     if (!enabled || items.length === 0 || !useMultiQuotesFallback) return
+
+    if (debugLivePrice) {
+      console.debug('[useLivePrice] enabled', {
+        enabled,
+        itemsCount: items.length,
+        apiKeyPresent: Boolean(apiKey),
+        useMultiQuotesFallback,
+      })
+    }
 
     // Initial fetch
     fetchMultiQuotes()
@@ -147,20 +187,30 @@ export function useLivePrice<T extends PriceableItem>(
   }, [enabled, items.length, useMultiQuotesFallback, fetchMultiQuotes, multiQuotesRefreshInterval])
 
   /**
-   * Enhance items with real-time LTP and calculated average_price
+   * Enhance items with real-time LTP and recalculated P&L
    * Priority: WebSocket (fresh + market open) → MultiQuotes → REST API
    *
-   * Note: pnl and pnlpercent always come from REST API (not recalculated)
-   * average_price is calculated backwards from: avgPrice = currentLtp - (pnl / qty)
+   * For open positions (qty != 0): P&L and P&L% are recalculated using live LTP
+   * For closed positions (qty = 0): P&L and P&L% from REST API (realized values)
    */
   const enhancedData = useMemo(() => {
+    if (debugLivePrice && enabled && items.length > 0) {
+      console.debug('[useLivePrice] enhance items', {
+        itemsCount: items.length,
+        wsConnected,
+        marketDataKeysSample: Array.from(marketData.keys()).slice(0, 5),
+        multiQuotesKeysSample: Array.from(multiQuotes.keys()).slice(0, 5),
+      })
+    }
+
     return items.map((item) => {
       const key = `${item.exchange}:${item.symbol}`
       const wsData = marketData.get(key)
       const mqData = multiQuotes.get(key)
 
+      const hasQuantity = item.quantity !== undefined && item.quantity !== null
       const qty = item.quantity || 0
-      const originalPnl = item.pnl || 0
+      const avgPrice = item.average_price || 0
 
       // Check if market is open for this exchange
       const exchangeMarketOpen = isMarketOpen(item.exchange)
@@ -179,6 +229,10 @@ export function useLivePrice<T extends PriceableItem>(
       let currentLtp: number | undefined
       let dataSource: 'websocket' | 'multiquotes' | 'rest' = 'rest'
 
+      const wsAgeMs = wsData?.lastUpdate ? Date.now() - wsData.lastUpdate : null
+      const wsLtp = wsData?.data?.ltp
+      const mqLtp = mqData?.ltp
+
       if (hasWsData && wsData?.data?.ltp) {
         currentLtp = wsData.data.ltp
         dataSource = 'websocket'
@@ -190,29 +244,75 @@ export function useLivePrice<T extends PriceableItem>(
         dataSource = 'rest'
       }
 
-      // For closed positions (qty=0), preserve all REST API values
-      if (qty === 0) {
+      if (debugLivePrice) {
+        // Log decision inputs for debugging tick issues (limited to first 5 items to reduce noise)
+        const idx = items.indexOf(item)
+        if (idx > -1 && idx < 5) {
+          console.debug('[useLivePrice] decision', {
+            key,
+            exchange: item.exchange,
+            exchangeMarketOpen,
+            staleThreshold,
+            wsConnected,
+            wsHasData: Boolean(wsData),
+            wsLtp,
+            wsAgeMs,
+            mqHasData: Boolean(mqData),
+            mqLtp,
+            hasWsData,
+            hasMqData,
+            selectedSource: dataSource,
+            selectedLtp: currentLtp,
+          })
+        }
+      }
+
+      // For closed positions (qty=0), preserve ALL REST API values including LTP.
+      // IMPORTANT: only do this when `quantity` is explicitly present on the item.
+      // Some screens (e.g. strategy legs) use this hook for live LTP only and do not
+      // provide quantity/avgPrice; for those, we still want live LTP updates.
+      if (hasQuantity && qty === 0) {
         return {
           ...item,
-          ltp: currentLtp,
-          _dataSource: dataSource,
+          // Keep item.ltp from REST API - don't update with live data
+          // This prevents P&L% from recalculating with changing LTP
+          _dataSource: 'rest',
         } as T & { _dataSource: string }
       }
 
-      // Calculate average price from REST data if not provided
-      // Formula: AvgPrice = LTP - (PnL / Qty)
-      let avgPrice = item.average_price
-      if (!avgPrice && currentLtp && qty !== 0) {
-        avgPrice = currentLtp - originalPnl / qty
+      // For open positions: recalculate P&L and P&L% using live LTP
+      // This ensures real-time updates as LTP changes
+      let calculatedPnl = item.pnl || 0
+      let calculatedPnlPercent = item.pnlpercent || 0
+
+      // Get today's realized P&L if available (from sandbox mode)
+      // This ensures cumulative P&L (realized + unrealized) is shown correctly
+      const todayRealizedPnl = item.today_realized_pnl || 0
+
+      if (currentLtp && avgPrice > 0) {
+        // Calculate unrealized P&L based on position direction
+        // Long (qty > 0): profit when ltp > avgPrice
+        // Short (qty < 0): profit when ltp < avgPrice
+        let unrealizedPnl: number
+        if (qty > 0) {
+          unrealizedPnl = (currentLtp - avgPrice) * qty
+        } else {
+          unrealizedPnl = (avgPrice - currentLtp) * Math.abs(qty)
+        }
+
+        // Total P&L = today's realized (from partial closes) + current unrealized
+        calculatedPnl = todayRealizedPnl + unrealizedPnl
+
+        // P&L% based on total P&L and investment
+        const investment = Math.abs(avgPrice * qty)
+        calculatedPnlPercent = investment > 0 ? (calculatedPnl / investment) * 100 : 0
       }
 
-      // Return with updated LTP and calculated avgPrice
-      // pnl and pnlpercent always from REST API
       return {
         ...item,
         ltp: currentLtp,
-        average_price: avgPrice,
-        // pnl and pnlpercent preserved from REST API via spread
+        pnl: calculatedPnl,
+        pnlpercent: calculatedPnlPercent,
         _dataSource: dataSource,
       } as T & { _dataSource: string }
     })
