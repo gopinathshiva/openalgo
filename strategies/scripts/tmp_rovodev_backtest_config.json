@@ -1,5 +1,5 @@
 {
-  "config": "strategy_config.json",
+  "config": "config/profile_gopi.json",
   "start_date": "2026-01-05",
   "end_date": "2026-01-05",
   "interval": "1m",

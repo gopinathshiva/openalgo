@@ -1,37 +1,33 @@
 {
-    "API_KEY": "b0b33f31812c948e90620949200ff0542c2a6432b409a07a4495daebd91b549f",
-    "HOST": "http://127.0.0.1:3300",
-    "STRATEGY_NAME": "NIFTY_OTM2_WT_STRATEGY",
-    "LOTS": 5,
-    "LOT_SIZE": 65,
-    "SL_PERCENT": 0.05,
+    "API_KEY": "a7fe7bcf5bf525f89222914d8c08189336bf17035a8e67c1f8f10468b0030409",
+    "HOST": "http://127.0.0.1:3301",
+    "STRATEGY_NAME": "RELIANCE_ONLY_2_TRADES",
+    "LOTS": 1,
+    "LOT_SIZE": 500,
     "REENTRY_LIMIT": 4,
-    "UNDERLYING": "NIFTY",
-    "UNDERLYING_EXCHANGE": "NSE_INDEX",
+    "UNDERLYING": "RELIANCE",
+    "UNDERLYING_EXCHANGE": "NSE",
     "OPTIONS_EXCHANGE": "NFO",
-    "EXPIRY_DATE": "03FEB26",
+    "EXPIRY_DATE": "24FEB26",
     "PRODUCT": "NRML",
     "POLL_INTERVAL": 1,
     "DETAILED_LOGGING": true,
-    "PERSIST_CYCLES": 5,
-    "USE_WEBSOCKET": true,
+    "PERSIST_CYCLES": 3,
+    "USE_WEBSOCKET": false,
     "legs": [
         {
             "name": "CE_LEG",
-            "ce_sell_offset": "OTM2",
-            "sl_percent": 0.1,
-            "reentry_limit": 4,
+            "ce_sell_offset": "ATM",
             "target_percent": 0.25,
-            "reexecute_limit": 4
+            "reentry_limit": 0,
+            "reexecute_limit": 0
         },
         {
             "name": "PE_LEG",
-            "pe_sell_offset": "OTM2",
-            "wait_trade_percentage": 0.15,
-            "sl_percent": 0.1,
-            "reentry_limit": 4,
+            "pe_sell_offset": "ATM",
             "target_percent": 0.25,
-            "reexecute_limit": 4
+            "reentry_limit": 0,
+            "reexecute_limit": 0
         }
     ]
 }
