@@ -58,7 +58,7 @@ import { createManualStrategyLeg, createStrategyOverride, deleteStrategyState, g
 import { tradingApi } from '@/api/trading'
 import { useAuthStore } from '@/stores/authStore'
 import { useLivePrice } from '@/hooks/useLivePrice'
-import type { LegState, LegStatus, StrategyState, TradeHistoryRecord, ExitType, OverrideType } from '@/types/strategy-state'
+import type { LegPairConfig, LegState, LegStatus, StrategyState, TradeHistoryRecord, ExitType, OverrideType } from '@/types/strategy-state'
 import type { Position } from '@/types/trading'
 
 
@@ -907,7 +907,7 @@ function StrategyAccordionItem({
                       <div className="space-y-2 md:col-span-2 lg:col-span-3">
                         <p className="font-semibold text-xs uppercase text-muted-foreground">Leg Configurations</p>
                         <div className="grid gap-3 md:grid-cols-2">
-                          {config.leg_pair_configs.map((legConfig: any, idx: number) => (
+                          {config.leg_pair_configs.map((legConfig: LegPairConfig, idx: number) => (
                             <div key={idx} className="border rounded p-3 bg-background/50">
                               <p className="font-medium mb-2">{legConfig.name || `Leg ${idx + 1}`}</p>
                               <div className="space-y-1 text-xs">

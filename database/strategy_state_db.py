@@ -349,14 +349,15 @@ def add_manual_strategy_leg(
             
             # Optional fields - only check if they exist in the existing leg
             # This handles backward compatibility with legs created before exchange/product were stored
-            exchange_match = True
-            product_match = True
+            exchange_match = (
+                existing_leg.get('exchange') is None or
+                existing_leg.get('exchange') == exchange
+            )
             
-            if existing_leg.get('exchange') is not None:
-                exchange_match = existing_leg.get('exchange') == exchange
-            
-            if existing_leg.get('product') is not None:
-                product_match = existing_leg.get('product') == product
+            product_match = (
+                existing_leg.get('product') is None or
+                existing_leg.get('product') == product
+            )
             
             if symbol_match and side_match and qty_match and exchange_match and product_match:
                 raise StrategyStateDuplicateLegError('Similar open position already exists in this strategy')
