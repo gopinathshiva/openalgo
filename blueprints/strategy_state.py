@@ -421,8 +421,9 @@ def manual_exit_leg_endpoint(instance_id, leg_key):
 
     Request body:
         {
-            "exit_price": 123.45,
-            "exit_status": "SL_HIT" | "TARGET_HIT"
+            "exit_price": 123.45,  # Optional if exit_at_market=true
+            "exit_status": "SL_HIT" | "TARGET_HIT",
+            "exit_at_market": false  # Optional, default false
         }
 
     Returns:
@@ -441,41 +442,58 @@ def manual_exit_leg_endpoint(instance_id, leg_key):
 
         exit_price = data.get('exit_price')
         exit_status = data.get('exit_status')
+        exit_at_market = data.get('exit_at_market', False)
 
-        # Validate required fields
-        if exit_price is None:
-            return jsonify({
-                'status': 'error',
-                'message': 'exit_price is required'
-            }), 400
+        # For market exits, exit_status is optional and defaults to MANUAL_EXIT
+        if exit_at_market:
+            if not exit_status:
+                exit_status = 'MANUAL_EXIT'
+            elif exit_status not in ('SL_HIT', 'TARGET_HIT', 'MANUAL_EXIT'):
+                return jsonify({
+                    'status': 'error',
+                    'message': 'exit_status must be SL_HIT, TARGET_HIT, or MANUAL_EXIT'
+                }), 400
+        else:
+            # For manual price exits, exit_status is required
+            if not exit_status:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'exit_status is required for manual price exits'
+                }), 400
 
-        if not exit_status:
-            return jsonify({
-                'status': 'error',
-                'message': 'exit_status is required'
-            }), 400
+            if exit_status not in ('SL_HIT', 'TARGET_HIT'):
+                return jsonify({
+                    'status': 'error',
+                    'message': 'exit_status must be SL_HIT or TARGET_HIT for manual price exits'
+                }), 400
 
-        # Validate exit_status
-        if exit_status not in ('SL_HIT', 'TARGET_HIT'):
-            return jsonify({
-                'status': 'error',
-                'message': 'exit_status must be SL_HIT or TARGET_HIT'
-            }), 400
+        # Validate exit_price based on exit_at_market flag
+        if exit_at_market:
+            # Market exit - price will be determined by order execution
+            logger.info(f"Market exit requested for {instance_id}/{leg_key}")
+            exit_price = None  # Will be filled after order execution
+        else:
+            # Manual price exit - price is required
+            if exit_price is None:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'exit_price is required when exit_at_market is false'
+                }), 400
 
-        # Validate exit_price is a number
-        try:
-            exit_price = float(exit_price)
-        except (TypeError, ValueError):
-            return jsonify({
-                'status': 'error',
-                'message': 'exit_price must be a valid number'
-            }), 400
+            # Validate exit_price is a number
+            try:
+                exit_price = float(exit_price)
+            except (TypeError, ValueError):
+                return jsonify({
+                    'status': 'error',
+                    'message': 'exit_price must be a valid number'
+                }), 400
 
-        if exit_price <= 0:
-            return jsonify({
-                'status': 'error',
-                'message': 'exit_price must be positive'
-            }), 400
+            if exit_price <= 0:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'exit_price must be positive'
+                }), 400
 
         # Get the strategy state
         state = get_strategy_state_by_instance_id(instance_id)
@@ -500,38 +518,155 @@ def manual_exit_leg_endpoint(instance_id, leg_key):
                 'status': 'error',
                 'message': f'Can only exit legs with IN_POSITION status. Current status: {leg.get("status")}'
             }), 400
+        
+        # Track leg type and strategy status for override creation
+        leg_type = leg.get('leg_type', 'MANUAL')
+        strategy_status = state.get('status', 'COMPLETED')
 
-        # Validate exit price based on side and exit_status
-        entry_price = leg.get('entry_price')
-        side = leg.get('side')
+        # If market exit is requested, execute the order first
+        if exit_at_market:
+            from services.strategy_exit_service import execute_market_exit
+            from database.auth_db import get_api_key_for_tradingview
+            
+            # Get username from session
+            username = session.get('user')
+            if not username:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'User not found in session'
+                }), 401
+            
+            # Get API key for the user
+            api_key = get_api_key_for_tradingview(username)
+            if not api_key:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'API key not found for user'
+                }), 401
+            
+            # Extract leg details
+            leg_symbol = leg.get('symbol')
+            leg_exchange = leg.get('exchange')
+            leg_product = leg.get('product')
+            leg_quantity = leg.get('quantity')
+            leg_side = leg.get('side')
+            
+            # If product not in leg, try to get from strategy config
+            if not leg_product:
+                config = state.get('config', {})
+                leg_product = config.get('product')
+                if leg_product:
+                    logger.info(f"[MarketExit] Product not in leg, using from config: {leg_product}")
+                else:
+                    logger.warning(f"[MarketExit] Product not found in leg or config")
+            
+            # Debug logging to see what's in the leg
+            logger.info(f"[MarketExit] Leg data: symbol={leg_symbol}, exchange={leg_exchange}, product={leg_product}, quantity={leg_quantity}, side={leg_side}")
+            logger.info(f"[MarketExit] Full leg dict keys: {list(leg.keys())}")
+            logger.info(f"[MarketExit] Full leg dict: {leg}")
+            
+            # Check for required fields
+            if not leg_symbol:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Symbol is required for market exit'
+                }), 400
+            
+            if not leg_quantity or leg_quantity <= 0:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Quantity is required for market exit'
+                }), 400
+            
+            if not leg_side:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Side (BUY/SELL) is required for market exit'
+                }), 400
+            
+            # For exchange and product, try to infer from symbol or use defaults
+            if not leg_exchange:
+                # Try to infer from symbol format
+                symbol_upper = leg_symbol.upper()
+                
+                # Check for options (CE/PE suffix indicates derivatives)
+                if 'CE' in symbol_upper or 'PE' in symbol_upper:
+                    # Options - determine exchange based on underlying
+                    if 'SENSEX' in symbol_upper or 'BANKEX' in symbol_upper:
+                        leg_exchange = 'BFO'  # BSE derivatives
+                        logger.warning(f"[MarketExit] Exchange not found, inferred BFO from symbol: {leg_symbol}")
+                    elif 'NIFTY' in symbol_upper or 'BANKNIFTY' in symbol_upper or 'FINNIFTY' in symbol_upper or 'MIDCPNIFTY' in symbol_upper:
+                        leg_exchange = 'NFO'  # NSE derivatives
+                        logger.warning(f"[MarketExit] Exchange not found, inferred NFO from symbol: {leg_symbol}")
+                    else:
+                        # Unknown options - default to NFO
+                        leg_exchange = 'NFO'
+                        logger.warning(f"[MarketExit] Exchange not found, defaulting to NFO for options symbol: {leg_symbol}")
+                else:
+                    # Equity - default to NSE
+                    leg_exchange = 'NSE'
+                    logger.warning(f"[MarketExit] Exchange not found, inferred NSE for equity symbol: {leg_symbol}")
+            
+            if not leg_product:
+                # Default to MIS for intraday
+                leg_product = 'MIS'
+                logger.warning(f"[MarketExit] Product not found, defaulting to MIS for {leg_symbol}")
+            
+            logger.info(f"Executing market exit for {instance_id}/{leg_key}")
+            
+            # Execute market exit order
+            success, fill_price, message = execute_market_exit(
+                leg_symbol=leg_symbol,
+                leg_exchange=leg_exchange,
+                leg_product=leg_product,
+                leg_quantity=leg_quantity,
+                leg_side=leg_side,
+                api_key=api_key
+            )
+            
+            if not success:
+                logger.error(f"Market exit failed: {message}")
+                return jsonify({
+                    'status': 'error',
+                    'message': f'Market exit failed: {message}'
+                }), 400
+            
+            # Use the fill price from order execution
+            exit_price = fill_price
+            logger.info(f"Market exit successful at price {exit_price}")
+        
+        # Validate exit price based on side and exit_status (only for manual exit)
+        if not exit_at_market:
+            entry_price = leg.get('entry_price')
+            side = leg.get('side')
 
-        if entry_price and side:
-            if exit_status == 'TARGET_HIT':
-                if side == 'BUY' and exit_price <= entry_price:
-                    return jsonify({
-                        'status': 'error',
-                        'message': f'For BUY positions with TARGET_HIT, exit price must be greater than entry price ({entry_price})'
-                    }), 400
-                elif side == 'SELL' and exit_price >= entry_price:
-                    return jsonify({
-                        'status': 'error',
-                        'message': f'For SELL positions with TARGET_HIT, exit price must be less than entry price ({entry_price})'
-                    }), 400
+            if entry_price and side:
+                if exit_status == 'TARGET_HIT':
+                    if side == 'BUY' and exit_price <= entry_price:
+                        return jsonify({
+                            'status': 'error',
+                            'message': f'For BUY positions with TARGET_HIT, exit price must be greater than entry price ({entry_price})'
+                        }), 400
+                    elif side == 'SELL' and exit_price >= entry_price:
+                        return jsonify({
+                            'status': 'error',
+                            'message': f'For SELL positions with TARGET_HIT, exit price must be less than entry price ({entry_price})'
+                        }), 400
 
-            elif exit_status == 'SL_HIT':
-                if side == 'BUY' and exit_price >= entry_price:
-                    return jsonify({
-                        'status': 'error',
-                        'message': f'For BUY positions with SL_HIT, exit price must be less than entry price ({entry_price})'
-                    }), 400
-                elif side == 'SELL' and exit_price <= entry_price:
-                    return jsonify({
-                        'status': 'error',
-                        'message': f'For SELL positions with SL_HIT, exit price must be greater than entry price ({entry_price})'
-                    }), 400
+                elif exit_status == 'SL_HIT':
+                    if side == 'BUY' and exit_price >= entry_price:
+                        return jsonify({
+                            'status': 'error',
+                            'message': f'For BUY positions with SL_HIT, exit price must be less than entry price ({entry_price})'
+                        }), 400
+                    elif side == 'SELL' and exit_price <= entry_price:
+                        return jsonify({
+                            'status': 'error',
+                            'message': f'For SELL positions with SL_HIT, exit price must be greater than entry price ({entry_price})'
+                        }), 400
 
         # Update the leg in database
-        from database.strategy_state_db import manual_exit_strategy_leg
+        from database.strategy_state_db import manual_exit_strategy_leg, create_strategy_override
         try:
             result = manual_exit_strategy_leg(
                 instance_id=instance_id,
@@ -542,6 +677,20 @@ def manual_exit_leg_endpoint(instance_id, leg_key):
             )
 
             logger.info(f"Manually exited leg {leg_key} in strategy {instance_id} with status {exit_status}")
+            
+            # If this is a running Python strategy, create a MANUAL_EXIT override
+            # so the strategy can detect and respect the manual exit
+            if leg_type != 'MANUAL' and strategy_status == 'RUNNING':
+                try:
+                    create_strategy_override(
+                        instance_id=instance_id,
+                        leg_key=leg_key,
+                        override_type='MANUAL_EXIT',
+                        new_value=exit_price
+                    )
+                    logger.info(f"Created MANUAL_EXIT override for {instance_id}/{leg_key}")
+                except Exception as override_error:
+                    logger.warning(f"Failed to create MANUAL_EXIT override: {override_error}")
 
             return jsonify({
                 'status': 'success',

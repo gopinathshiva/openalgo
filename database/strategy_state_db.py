@@ -657,7 +657,8 @@ def manual_exit_strategy_leg(
             pnl = (entry_price - exit_price) * quantity
         
         # Update leg status and exit details
-        leg['status'] = exit_status
+        leg['status'] = 'DONE'  # Mark as DONE so frontend recognizes it as exited
+        leg['exit_type'] = exit_status  # Store exit reason (SL_HIT/TARGET_HIT/MANUAL_EXIT)
         leg['exit_price'] = exit_price
         leg['exit_time'] = exit_time.isoformat() if exit_time else None
         leg['realized_pnl'] = pnl
@@ -666,7 +667,12 @@ def manual_exit_strategy_leg(
         
         # Add to trade history
         trade_history = parsed_state.get('trade_history') or []
+        
+        # Get the next trade_id
+        trade_id = len(trade_history) + 1
+        
         trade_history_entry = {
+            'trade_id': trade_id,
             'leg_key': leg_key,
             'symbol': leg.get('symbol'),
             'exchange': leg.get('exchange'),
@@ -677,7 +683,9 @@ def manual_exit_strategy_leg(
             'entry_time': leg.get('entry_time'),
             'exit_price': exit_price,
             'exit_time': exit_time.isoformat() if exit_time else None,
-            'exit_reason': exit_status,
+            'exit_type': exit_status,  # SL_HIT, TARGET_HIT, or MANUAL_EXIT
+            'sl_price': leg.get('sl_price'),
+            'target_price': leg.get('target_price'),
             'pnl': pnl,
             'leg_pair_name': leg.get('leg_pair_name'),
             'is_main_leg': leg.get('is_main_leg'),
