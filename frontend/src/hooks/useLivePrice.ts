@@ -215,10 +215,6 @@ export function useLivePrice<T extends PriceableItem>(
       let currentLtp: number | undefined
       let dataSource: 'websocket' | 'multiquotes' | 'rest' = 'rest'
 
-      const wsAgeMs = wsData?.lastUpdate ? Date.now() - wsData.lastUpdate : null
-      const wsLtp = wsData?.data?.ltp
-      const mqLtp = mqData?.ltp
-
       if (hasWsData && wsData?.data?.ltp) {
         currentLtp = wsData.data.ltp
         dataSource = 'websocket'
