@@ -9,5 +9,6 @@
   "risk_free_rate": 0.06,
   "slippage_bps": 5,
   "out_dir": "tmp/backtest_out",
-  "strike_distance": 100
+  "strike_distance": 100,
+  "MONITORING_DELAY_SECONDS": 0
 }
