@@ -9,7 +9,7 @@ from datetime import datetime
 # scripts/ is one level deep, so .. is root
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from database.auth_db import get_auth_token, Auth
+from database.auth_db import get_auth_token, get_api_key_for_tradingview, Auth
 
 # Setup logging
 logging.basicConfig(
@@ -106,7 +106,18 @@ def main():
         logger.error(f"Error fetching token from DB: {e}")
         sys.exit(1)
 
-    # 3. Create JSON payload
+    # 3. Fetch OpenAlgo API Key
+    try:
+        openalgo_api_key = get_api_key_for_tradingview(user_id)
+        if openalgo_api_key:
+            logger.info(f"Found OpenAlgo API key for user: {user_id}")
+        else:
+            logger.warning(f"No OpenAlgo API key found for user {user_id}. It will not be included in shared credentials.")
+    except Exception as e:
+        logger.warning(f"Error fetching OpenAlgo API key: {e}. It will not be included in shared credentials.")
+        openalgo_api_key = None
+    
+    # 4. Create JSON payload
     payload = {
         "api_key": api_key,
         "access_token": real_access_token,
@@ -114,7 +125,11 @@ def main():
         "source_user_id": user_id
     }
     
-    # 4. Write to file
+    # Add OpenAlgo API key if available
+    if openalgo_api_key:
+        payload["openalgo_api_key"] = openalgo_api_key
+    
+    # 5. Write to file
     try:
         # Ensure directory exists (if path includes directories)
         dir_name = os.path.dirname(shared_file_path)

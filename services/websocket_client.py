@@ -20,6 +20,14 @@ from utils.logging import get_logger
 # Initialize logger
 logger = get_logger(__name__)
 
+# Try to import shared credentials helper (may not exist for non-Zerodha brokers)
+try:
+    from broker.zerodha.credential_manager import get_shared_openalgo_api_key
+    _has_shared_creds_support = True
+except ImportError:
+    _has_shared_creds_support = False
+    get_shared_openalgo_api_key = None
+
 
 class WebSocketClient:
     """
@@ -37,7 +45,20 @@ class WebSocketClient:
             port: WebSocket server port
         """
         self.ws_url = f"ws://{host}:{port}"
-        self.api_key = api_key
+        
+        # Try to get OpenAlgo API key from shared credentials file if available
+        shared_api_key = None
+        if _has_shared_creds_support and get_shared_openalgo_api_key:
+            try:
+                shared_api_key = get_shared_openalgo_api_key()
+                if shared_api_key:
+                    logger.info("Using OpenAlgo API key from shared credentials file for WebSocket authentication (cached)")
+            except Exception as e:
+                logger.warning(f"Could not load shared OpenAlgo API key: {e}")
+        
+        # Use shared API key if available, otherwise fall back to provided api_key
+        self.api_key = shared_api_key if shared_api_key else api_key
+        
         self.ws = None
         self.loop = None
         self.thread = None

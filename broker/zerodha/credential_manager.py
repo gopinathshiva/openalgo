@@ -18,7 +18,7 @@ def _load_shared_credentials_from_file(shared_credentials_file):
         shared_credentials_file (str): Path to the shared credentials JSON file.
 
     Returns:
-        dict: Dictionary with 'api_key' and 'access_token' keys.
+        dict: Dictionary with 'api_key', 'access_token', and optionally 'openalgo_api_key' keys.
 
     Raises:
         FileNotFoundError: If the file doesn't exist.
@@ -33,12 +33,18 @@ def _load_shared_credentials_from_file(shared_credentials_file):
 
     api_key = creds.get('api_key')
     access_token = creds.get('access_token')
+    openalgo_api_key = creds.get('openalgo_api_key')  # Load OpenAlgo API key for WebSocket auth
 
     if not api_key or not access_token:
         raise ValueError(f"Shared credentials file exists but contains empty keys. details: {creds}")
 
     logger.info(f"Loaded shared credentials from: {shared_credentials_file}")
-    return {'api_key': api_key, 'access_token': access_token}
+    
+    # Return all credentials including openalgo_api_key if present
+    result = {'api_key': api_key, 'access_token': access_token}
+    if openalgo_api_key:
+        result['openalgo_api_key'] = openalgo_api_key
+    return result
 
 
 def get_shared_credentials(default_api_key, default_access_token):
@@ -166,3 +172,38 @@ def get_shared_auth_token(default_auth_token):
             logger.error(f"CRITICAL: Failed to load shared credentials: {e}")
             # Fail fast - do not fallback to local creds if shared mode was explicitly requested
             raise
+
+
+def get_shared_openalgo_api_key():
+    """
+    Get the OpenAlgo API key from shared credentials file for WebSocket authentication.
+    
+    Returns:
+        str or None: OpenAlgo API key if available in shared credentials, None otherwise.
+    """
+    global _credentials_cache
+    
+    shared_credentials_file = os.getenv('SHARED_CREDENTIALS_FILE')
+    
+    if not shared_credentials_file:
+        # Normal mode: no shared credentials
+        return None
+    
+    # Check cache first
+    if _credentials_cache is not None:
+        return _credentials_cache.get('openalgo_api_key')
+    
+    # Cache miss - load credentials
+    with _cache_lock:
+        # Double-check cache after acquiring lock
+        if _credentials_cache is not None:
+            return _credentials_cache.get('openalgo_api_key')
+        
+        try:
+            # Load from file and cache
+            _credentials_cache = _load_shared_credentials_from_file(shared_credentials_file)
+            return _credentials_cache.get('openalgo_api_key')
+        
+        except Exception as e:
+            logger.error(f"Failed to load shared credentials for OpenAlgo API key: {e}")
+            return None
