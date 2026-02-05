@@ -9,7 +9,6 @@ import time
 from typing import Tuple, Optional
 
 from database.settings_db import get_analyze_mode
-from database.auth_db import get_auth_token_broker
 from utils.logging import get_logger
 
 logger = get_logger(__name__)

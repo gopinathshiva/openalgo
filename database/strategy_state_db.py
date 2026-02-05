@@ -668,8 +668,11 @@ def manual_exit_strategy_leg(
         # Add to trade history
         trade_history = parsed_state.get('trade_history') or []
         
-        # Get the next trade_id
-        trade_id = len(trade_history) + 1
+        # Get the next trade_id (use max to avoid duplicate IDs if history is ever modified)
+        if trade_history:
+            trade_id = max(t.get('trade_id', 0) for t in trade_history) + 1
+        else:
+            trade_id = 1
         
         trade_history_entry = {
             'trade_id': trade_id,

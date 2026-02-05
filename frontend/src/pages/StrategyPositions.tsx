@@ -46,6 +46,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Table,
   TableBody,
@@ -1214,10 +1215,8 @@ export default function StrategyPositions() {
       setExitPrice('')
       setExitAtMarket(false)
       
-      // Refresh data after a brief delay to ensure DB update has propagated
-      setTimeout(() => {
-        fetchData(false)
-      }, 500)
+      // Refresh data immediately after successful exit
+      await fetchData(false)
     } catch (error) {
       console.error('Error exiting position:', error)
       toast.error(error instanceof Error ? error.message : 'Failed to exit position')
@@ -1927,13 +1926,11 @@ export default function StrategyPositions() {
           <div className="space-y-4">
             <div className="space-y-2">
               <div className="flex items-center space-x-2">
-                <input
-                  type="checkbox"
+                <Checkbox
                   id="exit-at-market"
                   checked={exitAtMarket}
-                  onChange={(e) => handleExitAtMarketChange(e.target.checked)}
+                  onCheckedChange={handleExitAtMarketChange}
                   disabled={isExiting}
-                  className="h-4 w-4 rounded border-gray-300"
                 />
                 <Label htmlFor="exit-at-market" className="text-sm font-medium cursor-pointer">
                   Exit at market price

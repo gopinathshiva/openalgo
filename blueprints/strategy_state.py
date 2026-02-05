@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, request, session
 
+from database.auth_db import get_api_key_for_tradingview
 from database.strategy_state_db import (
     StrategyStateDbError,
     StrategyStateDbNotFoundError,
@@ -20,6 +21,7 @@ from database.strategy_state_db import (
     get_all_strategy_states,
     get_strategy_state_by_instance_id,
 )
+from services.strategy_exit_service import execute_market_exit
 from utils.logging import get_logger
 from utils.session import check_session_validity
 
@@ -444,43 +446,42 @@ def manual_exit_leg_endpoint(instance_id, leg_key):
         exit_status = data.get('exit_status')
         exit_at_market = data.get('exit_at_market', False)
 
-        # For market exits, exit_status is optional and defaults to MANUAL_EXIT
+        # Validate exit_status based on exit mode
         if exit_at_market:
-            if not exit_status:
-                exit_status = 'MANUAL_EXIT'
-            elif exit_status not in ('SL_HIT', 'TARGET_HIT', 'MANUAL_EXIT'):
+            # Market exit: exit_status is optional, defaults to MANUAL_EXIT
+            exit_status = exit_status or 'MANUAL_EXIT'
+            valid_statuses = ('SL_HIT', 'TARGET_HIT', 'MANUAL_EXIT')
+            if exit_status not in valid_statuses:
                 return jsonify({
                     'status': 'error',
-                    'message': 'exit_status must be SL_HIT, TARGET_HIT, or MANUAL_EXIT'
+                    'message': f'exit_status must be one of {valid_statuses}'
                 }), 400
+            
+            # Market exit - price will be determined by order execution
+            logger.info(f"Market exit requested for {instance_id}/{leg_key}")
+            exit_price = None  # Will be filled after order execution
         else:
-            # For manual price exits, exit_status is required
+            # Manual price exit: both exit_status and exit_price are required
             if not exit_status:
                 return jsonify({
                     'status': 'error',
                     'message': 'exit_status is required for manual price exits'
                 }), 400
-
-            if exit_status not in ('SL_HIT', 'TARGET_HIT'):
+            
+            valid_statuses = ('SL_HIT', 'TARGET_HIT')
+            if exit_status not in valid_statuses:
                 return jsonify({
                     'status': 'error',
-                    'message': 'exit_status must be SL_HIT or TARGET_HIT for manual price exits'
+                    'message': f'exit_status must be one of {valid_statuses} for manual price exits'
                 }), 400
-
-        # Validate exit_price based on exit_at_market flag
-        if exit_at_market:
-            # Market exit - price will be determined by order execution
-            logger.info(f"Market exit requested for {instance_id}/{leg_key}")
-            exit_price = None  # Will be filled after order execution
-        else:
-            # Manual price exit - price is required
+            
             if exit_price is None:
                 return jsonify({
                     'status': 'error',
                     'message': 'exit_price is required when exit_at_market is false'
                 }), 400
 
-            # Validate exit_price is a number
+            # Validate and convert exit_price
             try:
                 exit_price = float(exit_price)
             except (TypeError, ValueError):
@@ -525,9 +526,6 @@ def manual_exit_leg_endpoint(instance_id, leg_key):
 
         # If market exit is requested, execute the order first
         if exit_at_market:
-            from services.strategy_exit_service import execute_market_exit
-            from database.auth_db import get_api_key_for_tradingview
-            
             # Get username from session
             username = session.get('user')
             if not username:
