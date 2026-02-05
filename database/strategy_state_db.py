@@ -342,12 +342,24 @@ def add_manual_strategy_leg(
             if existing_leg.get('status') != 'IN_POSITION':
                 continue
             
-            # Check if all characteristics match
-            if (existing_leg.get('exchange') == exchange and
-                existing_leg.get('symbol') == symbol and
-                existing_leg.get('product') == product and
-                existing_leg.get('side') == side and
-                int(existing_leg.get('quantity') or 0) == int(quantity)):
+            # Core fields that must always match
+            symbol_match = existing_leg.get('symbol') == symbol
+            side_match = existing_leg.get('side') == side
+            qty_match = int(existing_leg.get('quantity') or 0) == int(quantity)
+            
+            # Optional fields - only check if they exist in the existing leg
+            # This handles backward compatibility with legs created before exchange/product were stored
+            exchange_match = (
+                existing_leg.get('exchange') is None or
+                existing_leg.get('exchange') == exchange
+            )
+            
+            product_match = (
+                existing_leg.get('product') is None or
+                existing_leg.get('product') == product
+            )
+            
+            if symbol_match and side_match and qty_match and exchange_match and product_match:
                 raise StrategyStateDuplicateLegError('Similar open position already exists in this strategy')
 
         legs[leg_key] = {
@@ -645,7 +657,8 @@ def manual_exit_strategy_leg(
             pnl = (entry_price - exit_price) * quantity
         
         # Update leg status and exit details
-        leg['status'] = exit_status
+        leg['status'] = 'DONE'  # Mark as DONE so frontend recognizes it as exited
+        leg['exit_type'] = exit_status  # Store exit reason (SL_HIT/TARGET_HIT/MANUAL_EXIT)
         leg['exit_price'] = exit_price
         leg['exit_time'] = exit_time.isoformat() if exit_time else None
         leg['realized_pnl'] = pnl
@@ -654,7 +667,15 @@ def manual_exit_strategy_leg(
         
         # Add to trade history
         trade_history = parsed_state.get('trade_history') or []
+        
+        # Get the next trade_id (use max to avoid duplicate IDs if history is ever modified)
+        if trade_history:
+            trade_id = max(t.get('trade_id', 0) for t in trade_history) + 1
+        else:
+            trade_id = 1
+        
         trade_history_entry = {
+            'trade_id': trade_id,
             'leg_key': leg_key,
             'symbol': leg.get('symbol'),
             'exchange': leg.get('exchange'),
@@ -665,7 +686,9 @@ def manual_exit_strategy_leg(
             'entry_time': leg.get('entry_time'),
             'exit_price': exit_price,
             'exit_time': exit_time.isoformat() if exit_time else None,
-            'exit_reason': exit_status,
+            'exit_type': exit_status,  # SL_HIT, TARGET_HIT, or MANUAL_EXIT
+            'sl_price': leg.get('sl_price'),
+            'target_price': leg.get('target_price'),
             'pnl': pnl,
             'leg_pair_name': leg.get('leg_pair_name'),
             'is_main_leg': leg.get('is_main_leg'),

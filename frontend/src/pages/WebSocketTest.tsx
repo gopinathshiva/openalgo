@@ -23,7 +23,7 @@ import {
   ZapOff,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { toast } from 'sonner'
+import { showToast } from '@/utils/toast'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -440,7 +440,7 @@ export default function WebSocketTest({ depthLevel = 5 }: WebSocketTestProps) {
   // Subscription controls
   const subscribe = (symbol: string, exchange: string, mode: string) => {
     if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
-      toast.error('Not connected')
+      showToast.error('Not connected')
       return
     }
 
@@ -503,7 +503,7 @@ export default function WebSocketTest({ depthLevel = 5 }: WebSocketTestProps) {
 
   const subscribeAll = (mode: string) => {
     if (activeSymbols.size === 0) {
-      toast.error('Add symbols first')
+      showToast.error('Add symbols first')
       return
     }
     activeSymbols.forEach((_, key) => {
@@ -559,7 +559,7 @@ export default function WebSocketTest({ depthLevel = 5 }: WebSocketTestProps) {
   const addSymbol = (symbol: string, exchange: string) => {
     const key = `${exchange}:${symbol}`
     if (activeSymbols.has(key)) {
-      toast.error('Already added')
+      showToast.error('Already added')
       return
     }
     setActiveSymbols((prev) =>

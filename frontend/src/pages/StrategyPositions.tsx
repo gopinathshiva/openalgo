@@ -46,6 +46,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Table,
   TableBody,
@@ -58,7 +59,7 @@ import { createManualStrategyLeg, createStrategyOverride, deleteStrategyState, g
 import { tradingApi } from '@/api/trading'
 import { useAuthStore } from '@/stores/authStore'
 import { useLivePrice } from '@/hooks/useLivePrice'
-import type { LegState, LegStatus, StrategyState, TradeHistoryRecord, ExitType, OverrideType } from '@/types/strategy-state'
+import type { LegPairConfig, LegState, LegStatus, StrategyState, TradeHistoryRecord, ExitType, OverrideType } from '@/types/strategy-state'
 import type { Position } from '@/types/trading'
 
 
@@ -597,8 +598,6 @@ function CurrentPositionsTable({
                   <TableHead>Symbol</TableHead>
                   <TableHead>Side</TableHead>
                   <TableHead className="text-right">Qty</TableHead>
-                  <TableHead className="text-right">Entry</TableHead>
-                  <TableHead className="text-right">Realized P&L</TableHead>
                   <TableHead className="text-right">Total P&L</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
@@ -626,16 +625,9 @@ function CurrentPositionsTable({
                     </TableCell>
                     <TableCell className="text-right">{leg.quantity}</TableCell>
                     <TableCell className="text-right">
-                      <div className="flex flex-col">
-                        <span>{formatPrice(leg.entry_price)}</span>
-                        <span className="text-xs text-muted-foreground">{formatTime(leg.entry_time)}</span>
+                      <div className="flex justify-end">
+                        <PnLDisplay value={leg.total_pnl ?? leg.realized_pnl} />
                       </div>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <PnLDisplay value={leg.realized_pnl} />
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <PnLDisplay value={leg.total_pnl ?? leg.realized_pnl} />
                     </TableCell>
                     <TableCell>
                       <Badge className={legStatusColors[leg.status] || 'bg-gray-400'} variant="secondary">
@@ -738,6 +730,7 @@ function StrategyAccordionItem({
   liveLtpByLegKey,
   onAddManualLeg,
   onExitLeg,
+  expandAll,
 }: {
   strategy: StrategyState
   onDelete: (instanceId: string, strategyName: string) => void
@@ -745,10 +738,17 @@ function StrategyAccordionItem({
   liveLtpByLegKey: Record<string, number | undefined>
   onAddManualLeg: (strategy: StrategyState) => void
   onExitLeg: (instanceId: string, legKey: string, leg: LegState) => void
+  expandAll: boolean
 }) {
-  const [isOpen, setIsOpen] = useState(true)
+  const [isOpen, setIsOpen] = useState(expandAll)
   const [isLegPnlOpen, setIsLegPnlOpen] = useState(false)
+  const [isConfigOpen, setIsConfigOpen] = useState(false)
   const config = strategy.config
+
+  // React to expandAll prop changes
+  useEffect(() => {
+    setIsOpen(expandAll)
+  }, [expandAll])
 
   const handleDeleteClick = (e: React.MouseEvent) => {
     e.stopPropagation() // Prevent accordion toggle
@@ -807,10 +807,12 @@ function StrategyAccordionItem({
                   <Button
                     variant="outline"
                     size="sm"
+                    disabled={strategy.status === 'COMPLETED'}
                     onClick={(e) => {
                       e.stopPropagation()
                       onAddManualLeg(strategy)
                     }}
+                    title={strategy.status === 'COMPLETED' ? 'Cannot add positions to completed strategies' : 'Add a manual position'}
                   >
                     Add Position
                   </Button>
@@ -861,6 +863,81 @@ function StrategyAccordionItem({
                 <PnLDisplay value={unrealizedPnl} showIcon={false} />
               </div>
             </div>
+
+            {/* Strategy Config (collapsed by default) */}
+            {config && (
+              <Collapsible open={isConfigOpen} onOpenChange={setIsConfigOpen}>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-md font-semibold">Strategy Configuration</h3>
+                  <CollapsibleTrigger asChild>
+                    <Button variant="ghost" size="sm" className="h-8 px-2">
+                      {isConfigOpen ? (
+                        <ChevronDown className="h-4 w-4 mr-2" />
+                      ) : (
+                        <ChevronRight className="h-4 w-4 mr-2" />
+                      )}
+                      {isConfigOpen ? 'Hide' : 'Show'}
+                    </Button>
+                  </CollapsibleTrigger>
+                </div>
+                <CollapsibleContent>
+                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 text-sm border rounded-md p-4 bg-muted/20">
+                    {/* Basic Settings */}
+                    <div className="space-y-2">
+                      <p className="font-semibold text-xs uppercase text-muted-foreground">Basic Settings</p>
+                      {config.underlying && <p><span className="text-muted-foreground">Underlying:</span> <span className="font-medium">{config.underlying}</span></p>}
+                      {config.expiry_date && <p><span className="text-muted-foreground">Expiry:</span> <span className="font-medium">{config.expiry_date}</span></p>}
+                      {config.lots !== undefined && <p><span className="text-muted-foreground">Lots:</span> <span className="font-medium">{config.lots}</span></p>}
+                      {config.lot_size !== undefined && <p><span className="text-muted-foreground">Lot Size:</span> <span className="font-medium">{config.lot_size}</span></p>}
+                      {config.quantity !== undefined && <p><span className="text-muted-foreground">Quantity:</span> <span className="font-medium">{config.quantity}</span></p>}
+                    </div>
+
+                    {/* Execution Settings */}
+                    <div className="space-y-2">
+                      <p className="font-semibold text-xs uppercase text-muted-foreground">Execution</p>
+                      {config.exchange && <p><span className="text-muted-foreground">Exchange:</span> <span className="font-medium">{config.exchange}</span></p>}
+                      {config.product && <p><span className="text-muted-foreground">Product:</span> <span className="font-medium">{config.product}</span></p>}
+                      {config.price_type && <p><span className="text-muted-foreground">Price Type:</span> <span className="font-medium">{config.price_type}</span></p>}
+                      {config.poll_interval !== undefined && <p><span className="text-muted-foreground">Poll Interval:</span> <span className="font-medium">{config.poll_interval}s</span></p>}
+                      {config.entry_time && <p><span className="text-muted-foreground">Entry Time:</span> <span className="font-medium">{config.entry_time}</span></p>}
+                      {config.exit_time && <p><span className="text-muted-foreground">Exit Time:</span> <span className="font-medium">{config.exit_time}</span></p>}
+                    </div>
+
+                    {/* Risk Management */}
+                    <div className="space-y-2">
+                      <p className="font-semibold text-xs uppercase text-muted-foreground">Risk Management</p>
+                      {config.sl_percent !== undefined && config.sl_percent !== null && <p><span className="text-muted-foreground">SL %:</span> <span className="font-medium">{(config.sl_percent * 100).toFixed(1)}%</span></p>}
+                      {config.target_percent !== undefined && config.target_percent !== null && <p><span className="text-muted-foreground">Target %:</span> <span className="font-medium">{(config.target_percent * 100).toFixed(1)}%</span></p>}
+                      {config.reentry_limit !== undefined && <p><span className="text-muted-foreground">Re-entry Limit:</span> <span className="font-medium">{config.reentry_limit}</span></p>}
+                      {config.reexecute_limit !== undefined && <p><span className="text-muted-foreground">Re-execute Limit:</span> <span className="font-medium">{config.reexecute_limit}</span></p>}
+                    </div>
+
+                    {/* Leg Pair Configs */}
+                    {config.leg_pair_configs && config.leg_pair_configs.length > 0 && (
+                      <div className="space-y-2 md:col-span-2 lg:col-span-3">
+                        <p className="font-semibold text-xs uppercase text-muted-foreground">Leg Configurations</p>
+                        <div className="grid gap-3 md:grid-cols-2">
+                          {config.leg_pair_configs.map((legConfig: LegPairConfig, idx: number) => (
+                            <div key={idx} className="border rounded p-3 bg-background/50">
+                              <p className="font-medium mb-2">{legConfig.name || `Leg ${idx + 1}`}</p>
+                              <div className="space-y-1 text-xs">
+                                {legConfig.main_leg && <p><span className="text-muted-foreground">Main Leg:</span> <span className="font-medium">{legConfig.main_leg}</span></p>}
+                                {legConfig.sl_percent !== undefined && legConfig.sl_percent !== null && <p><span className="text-muted-foreground">SL %:</span> <span className="font-medium">{(legConfig.sl_percent * 100).toFixed(1)}%</span></p>}
+                                {legConfig.target_percent !== undefined && legConfig.target_percent !== null && <p><span className="text-muted-foreground">Target %:</span> <span className="font-medium">{(legConfig.target_percent * 100).toFixed(1)}%</span></p>}
+                                {legConfig.reentry_limit !== undefined && <p><span className="text-muted-foreground">Re-entry:</span> <span className="font-medium">{legConfig.reentry_limit}</span></p>}
+                                {legConfig.reexecute_limit !== undefined && <p><span className="text-muted-foreground">Re-execute:</span> <span className="font-medium">{legConfig.reexecute_limit}</span></p>}
+                                {legConfig.ce_sell_offset && <p><span className="text-muted-foreground">CE Sell:</span> <span className="font-medium">{legConfig.ce_sell_offset}</span></p>}
+                                {legConfig.pe_sell_offset && <p><span className="text-muted-foreground">PE Sell:</span> <span className="font-medium">{legConfig.pe_sell_offset}</span></p>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            )}
 
             {/* Leg P&L Breakdown (collapsed by default) */}
             <Collapsible open={isLegPnlOpen} onOpenChange={setIsLegPnlOpen}>
@@ -1000,9 +1077,11 @@ export default function StrategyPositions() {
 
   const AUTO_REFRESH_ENABLED_KEY = 'strategy_positions_auto_refresh_enabled'
   const AUTO_REFRESH_SECONDS_KEY = 'strategy_positions_auto_refresh_seconds'
+  const EXPAND_ALL_KEY = 'strategy_positions_expand_all'
 
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true)
   const [autoRefreshSeconds, setAutoRefreshSeconds] = useState(10)
+  const [expandAll, setExpandAll] = useState(false)
   const isRefreshingRef = useRef(false)
   const [deleteDialog, setDeleteDialog] = useState<{
     open: boolean
@@ -1020,7 +1099,8 @@ export default function StrategyPositions() {
     leg: LegState | null
   }>({ open: false, instanceId: '', legKey: '', leg: null })
   const [exitPrice, setExitPrice] = useState('')
-  const [exitStatus, setExitStatus] = useState<'SL_HIT' | 'TARGET_HIT'>('SL_HIT')
+  const [exitStatus, setExitStatus] = useState<'SL_HIT' | 'TARGET_HIT' | null>('SL_HIT')
+  const [exitAtMarket, setExitAtMarket] = useState(false)
   const [isExiting, setIsExiting] = useState(false)
 
   const fetchData = async (showToast = false) => {
@@ -1070,50 +1150,73 @@ export default function StrategyPositions() {
     setExitDialog({ open: true, instanceId, legKey, leg })
     setExitPrice('')
     setExitStatus('SL_HIT')
+    setExitAtMarket(false)
+  }
+  
+  const handleExitAtMarketChange = (checked: boolean) => {
+    setExitAtMarket(checked)
+    // Reset exit status when switching modes
+    if (checked) {
+      setExitStatus(null) // Optional for market exits
+    } else {
+      setExitStatus('SL_HIT') // Required for manual exits
+    }
   }
 
   const handleExitConfirm = async () => {
     if (!exitDialog.instanceId || !exitDialog.legKey || !exitDialog.leg) return
 
-    const price = parseFloat(exitPrice)
-    if (isNaN(price) || price <= 0) {
-      toast.error('Please enter a valid exit price')
-      return
-    }
+    // Validation for manual price exit
+    if (!exitAtMarket) {
+      const price = parseFloat(exitPrice)
+      if (isNaN(price) || price <= 0) {
+        toast.error('Please enter a valid exit price')
+        return
+      }
+      
+      if (!exitStatus) {
+        toast.error('Please select an exit status')
+        return
+      }
 
-    // Validate exit price based on side and status
-    const entryPrice = exitDialog.leg.entry_price
-    const side = exitDialog.leg.side
+      // Validate exit price based on side and status
+      const entryPrice = exitDialog.leg.entry_price
+      const side = exitDialog.leg.side
 
-    if (entryPrice && side) {
-      if (exitStatus === 'TARGET_HIT') {
-        if (side === 'BUY' && price <= entryPrice) {
-          toast.error(`For BUY positions with TARGET_HIT, exit price must be greater than entry price (${entryPrice.toFixed(2)})`)
-          return
-        }
-        if (side === 'SELL' && price >= entryPrice) {
-          toast.error(`For SELL positions with TARGET_HIT, exit price must be less than entry price (${entryPrice.toFixed(2)})`)
-          return
-        }
-      } else if (exitStatus === 'SL_HIT') {
-        if (side === 'BUY' && price >= entryPrice) {
-          toast.error(`For BUY positions with SL_HIT, exit price must be less than entry price (${entryPrice.toFixed(2)})`)
-          return
-        }
-        if (side === 'SELL' && price <= entryPrice) {
-          toast.error(`For SELL positions with SL_HIT, exit price must be greater than entry price (${entryPrice.toFixed(2)})`)
-          return
+      if (entryPrice && side) {
+        if (exitStatus === 'TARGET_HIT') {
+          if (side === 'BUY' && price <= entryPrice) {
+            toast.error(`For BUY positions with TARGET_HIT, exit price must be greater than entry price (${entryPrice.toFixed(2)})`)
+            return
+          }
+          if (side === 'SELL' && price >= entryPrice) {
+            toast.error(`For SELL positions with TARGET_HIT, exit price must be less than entry price (${entryPrice.toFixed(2)})`)
+            return
+          }
+        } else if (exitStatus === 'SL_HIT') {
+          if (side === 'BUY' && price >= entryPrice) {
+            toast.error(`For BUY positions with SL_HIT, exit price must be less than entry price (${entryPrice.toFixed(2)})`)
+            return
+          }
+          if (side === 'SELL' && price <= entryPrice) {
+            toast.error(`For SELL positions with SL_HIT, exit price must be greater than entry price (${entryPrice.toFixed(2)})`)
+            return
+          }
         }
       }
     }
 
     setIsExiting(true)
     try {
-      const result = await manualExitLeg(exitDialog.instanceId, exitDialog.legKey, price, exitStatus)
+      const price = exitAtMarket ? null : parseFloat(exitPrice)
+      const result = await manualExitLeg(exitDialog.instanceId, exitDialog.legKey, price, exitStatus, exitAtMarket)
       toast.success(result.message)
       setExitDialog({ open: false, instanceId: '', legKey: '', leg: null })
       setExitPrice('')
-      fetchData(false)
+      setExitAtMarket(false)
+      
+      // Refresh data immediately after successful exit
+      await fetchData(false)
     } catch (error) {
       console.error('Error exiting position:', error)
       toast.error(error instanceof Error ? error.message : 'Failed to exit position')
@@ -1139,6 +1242,12 @@ export default function StrategyPositions() {
           setAutoRefreshSeconds(clamped)
         }
       }
+
+      // Load expand all preference (default to false = collapsed)
+      const savedExpandAll = window.localStorage.getItem(EXPAND_ALL_KEY)
+      if (savedExpandAll !== null) {
+        setExpandAll(savedExpandAll === '1')
+      }
     } catch (e) {
       console.error('Error loading strategy positions auto-refresh preferences:', e)
     }
@@ -1155,6 +1264,15 @@ export default function StrategyPositions() {
       console.error('Error saving strategy positions auto-refresh preferences:', e)
     }
   }, [autoRefreshEnabled, autoRefreshSeconds])
+
+  // Persist expand all preference
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(EXPAND_ALL_KEY, expandAll ? '1' : '0')
+    } catch (e) {
+      console.error('Error saving strategy positions expand all preference:', e)
+    }
+  }, [expandAll])
 
   // Auto-refresh timer (silent)
   useEffect(() => {
@@ -1432,55 +1550,62 @@ export default function StrategyPositions() {
 
   return (
     <div className="container mx-auto py-6 px-4 max-w-7xl">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 mb-6">
-        <div>
-          <h1 className="text-2xl font-bold">Strategy Positions</h1>
-          <p className="text-muted-foreground">
-            View positions and trade history for Python strategies
-          </p>
-        </div>
-
-        <div className="flex flex-col items-end gap-2">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <Label className="text-xs text-muted-foreground">Auto refresh</Label>
-              <Switch checked={autoRefreshEnabled} onCheckedChange={setAutoRefreshEnabled} />
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Label className="text-xs text-muted-foreground">Every (s)</Label>
-              <Input
-                type="number"
-                min={5}
-                max={300}
-                step={1}
-                value={autoRefreshSeconds}
-                onChange={(e) => {
-                  const raw = Number.parseInt(e.target.value, 10)
-                  if (Number.isNaN(raw)) return
-                  const clamped = Math.min(300, Math.max(5, raw))
-                  setAutoRefreshSeconds(clamped)
-                }}
-                className="h-8 w-20"
-                disabled={!autoRefreshEnabled}
-              />
-            </div>
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleRefresh}
-              disabled={isRefreshing}
-            >
-              <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
-              Refresh
-            </Button>
+      {/* Header - Sticky */}
+      <div className="sticky top-[56px] z-10 bg-background pb-6 mb-6 border-b">
+        <div className="flex items-start justify-between gap-4 pt-6">
+          <div>
+            <h1 className="text-2xl font-bold">Strategy Positions</h1>
+            <p className="text-muted-foreground">
+              View positions and trade history for Python strategies
+            </p>
           </div>
 
-          <p className="text-[11px] text-muted-foreground">
-            Range: 5–300 seconds (saved locally)
-          </p>
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <Label className="text-xs text-muted-foreground">Expand all</Label>
+                <Switch checked={expandAll} onCheckedChange={setExpandAll} />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Label className="text-xs text-muted-foreground">Auto refresh</Label>
+                <Switch checked={autoRefreshEnabled} onCheckedChange={setAutoRefreshEnabled} />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Label className="text-xs text-muted-foreground">Every (s)</Label>
+                <Input
+                  type="number"
+                  min={5}
+                  max={300}
+                  step={1}
+                  value={autoRefreshSeconds}
+                  onChange={(e) => {
+                    const raw = Number.parseInt(e.target.value, 10)
+                    if (Number.isNaN(raw)) return
+                    const clamped = Math.min(300, Math.max(5, raw))
+                    setAutoRefreshSeconds(clamped)
+                  }}
+                  className="h-8 w-20"
+                  disabled={!autoRefreshEnabled}
+                />
+              </div>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+              >
+                <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
+                Refresh
+              </Button>
+            </div>
+
+            <p className="text-[11px] text-muted-foreground">
+              Range: 5–300 seconds (saved locally)
+            </p>
+          </div>
         </div>
       </div>
 
@@ -1509,6 +1634,7 @@ export default function StrategyPositions() {
               liveLtpByLegKey={liveLtpByInstanceAndLegKey[strategy.instance_id] || {}}
               onAddManualLeg={handleOpenManualDialog}
               onExitLeg={handleExitRequest}
+              expandAll={expandAll}
             />
           ))}
         </div>
@@ -1794,49 +1920,85 @@ export default function StrategyPositions() {
           <DialogHeader>
             <DialogTitle>Exit Position</DialogTitle>
             <DialogDescription>
-              Manually exit position for {exitDialog.leg?.symbol} ({exitDialog.leg?.side} {exitDialog.leg?.quantity})
+              Exit position for {exitDialog.leg?.symbol} ({exitDialog.leg?.side} {exitDialog.leg?.quantity})
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="exit-price">Exit Price *</Label>
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="exit-at-market"
+                  checked={exitAtMarket}
+                  onCheckedChange={handleExitAtMarketChange}
+                  disabled={isExiting}
+                />
+                <Label htmlFor="exit-at-market" className="text-sm font-medium cursor-pointer">
+                  Exit at market price
+                </Label>
+              </div>
+              {exitAtMarket && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 flex items-start gap-1">
+                  <span className="mt-0.5">⚠️</span>
+                  <span>A MARKET order will be placed to exit this position. The actual fill price will be used.</span>
+                </p>
+              )}
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="exit-price">Exit Price {!exitAtMarket && '*'}</Label>
               <Input
                 id="exit-price"
                 type="number"
                 step="0.05"
-                placeholder="Enter exit price"
+                placeholder={exitAtMarket ? "Will use market price" : "Enter exit price"}
                 value={exitPrice}
                 onChange={(e) => setExitPrice(e.target.value)}
-                disabled={isExiting}
+                disabled={isExiting || exitAtMarket}
               />
               {exitDialog.leg?.entry_price && (
                 <p className="text-xs text-muted-foreground">
                   Entry Price: {formatPrice(exitDialog.leg.entry_price)}
                 </p>
               )}
+              {!exitAtMarket && (
+                <p className="text-xs text-muted-foreground">
+                  Use this to mark positions exited outside OpenAlgo
+                </p>
+              )}
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="exit-status">Exit Status *</Label>
-              <Select value={exitStatus} onValueChange={(v) => setExitStatus(v as 'SL_HIT' | 'TARGET_HIT')} disabled={isExiting}>
-                <SelectTrigger id="exit-status">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="SL_HIT">SL Hit</SelectItem>
-                  <SelectItem value="TARGET_HIT">Target Hit</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                Select the exit reason for this position
-              </p>
-            </div>
+            
+            {!exitAtMarket && (
+              <div className="space-y-2">
+                <Label htmlFor="exit-status">Exit Status *</Label>
+                <Select value={exitStatus || 'SL_HIT'} onValueChange={(v) => setExitStatus(v as 'SL_HIT' | 'TARGET_HIT')} disabled={isExiting}>
+                  <SelectTrigger id="exit-status">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="SL_HIT">SL Hit</SelectItem>
+                    <SelectItem value="TARGET_HIT">Target Hit</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Select the exit reason for this position
+                </p>
+              </div>
+            )}
+            
+            {exitAtMarket && (
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground">
+                  Exit status will be marked as <span className="font-medium">Manual Exit</span>
+                </p>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setExitDialog({ open: false, instanceId: '', legKey: '', leg: null })} disabled={isExiting}>
               Cancel
             </Button>
-            <Button onClick={handleExitConfirm} disabled={isExiting || !exitPrice}>
-              {isExiting ? 'Exiting...' : 'Exit Position'}
+            <Button onClick={handleExitConfirm} disabled={isExiting || (!exitAtMarket && !exitPrice)}>
+              {isExiting ? 'Exiting...' : exitAtMarket ? 'Exit at Market' : 'Exit Position'}
             </Button>
           </DialogFooter>
         </DialogContent>

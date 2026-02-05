@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { tradingApi, type QuotesData } from '@/api/trading'
 import { useMarketData } from '@/hooks/useMarketData'
 import { useMarketStatus } from '@/hooks/useMarketStatus'
+import { usePageVisibility } from '@/hooks/usePageVisibility'
 import { useAuthStore } from '@/stores/authStore'
 
 /**
@@ -30,6 +31,10 @@ export interface UseLivePriceOptions {
   useMultiQuotesFallback?: boolean
   /** Interval in ms to refresh MultiQuotes data (default: 30000) */
   multiQuotesRefreshInterval?: number
+  /** Pause WebSocket and polling when tab is hidden (default: true) */
+  pauseWhenHidden?: boolean
+  /** Time in ms to wait before pausing when hidden (default: 5000) */
+  pauseDelay?: number
 }
 
 /**
@@ -42,6 +47,8 @@ export interface UseLivePriceResult<T extends PriceableItem> {
   isLive: boolean
   /** Whether WebSocket is connected */
   isConnected: boolean
+  /** Whether WebSocket is paused due to tab being hidden */
+  isPaused: boolean
   /** Whether any market is currently open */
   isAnyMarketOpen: boolean
   /** Map of MultiQuotes data for external access if needed */
@@ -75,19 +82,20 @@ export function useLivePrice<T extends PriceableItem>(
     staleThreshold = 5000,
     useMultiQuotesFallback = true,
     multiQuotesRefreshInterval = 30000,
+    pauseWhenHidden = true,
+    pauseDelay = 5000,
   } = options
 
   const { apiKey } = useAuthStore()
   const { isMarketOpen, isAnyMarketOpen } = useMarketStatus()
+  const { isVisible, wasHidden, timeSinceHidden } = usePageVisibility()
   const anyMarketOpen = isAnyMarketOpen()
-
-  const debugLivePrice =
-    typeof window !== 'undefined' &&
-    (window.localStorage.getItem('debug_live_price') === '1' ||
-      window.localStorage.getItem('debug_live_price') === 'true')
 
   // State for MultiQuotes fallback data
   const [multiQuotes, setMultiQuotes] = useState<Map<string, QuotesData>>(new Map())
+
+  // Track last fetch time for visibility-aware refresh
+  const lastFetchRef = useRef<number>(Date.now())
 
   // Extract symbols for WebSocket subscription
   const symbols = useMemo(
@@ -99,15 +107,17 @@ export function useLivePrice<T extends PriceableItem>(
     [items]
   )
 
-  // WebSocket market data - connect when enabled (market check removed for testing)
-  const { data: marketData, isConnected: wsConnected } = useMarketData({
+  // WebSocket market data - connect when enabled, with visibility awareness
+  const { data: marketData, isConnected: wsConnected, isPaused: wsPaused } = useMarketData({
     symbols,
     mode: 'LTP',
     enabled: enabled && items.length > 0,
+    pauseWhenHidden,
+    pauseDelay,
   })
 
   // Effective live status
-  const isLive = wsConnected && anyMarketOpen
+  const isLive = wsConnected && anyMarketOpen && !wsPaused
 
   /**
    * Fetch MultiQuotes data from API
@@ -121,23 +131,7 @@ export function useLivePrice<T extends PriceableItem>(
         exchange: item.exchange,
       }))
 
-      if (debugLivePrice) {
-        console.debug('[useLivePrice] MultiQuotes request', {
-          count: symbolsList.length,
-          sample: symbolsList.slice(0, 5),
-        })
-      }
-
       const response = await tradingApi.getMultiQuotes(apiKey, symbolsList)
-
-      if (debugLivePrice) {
-        console.debug('[useLivePrice] MultiQuotes response', {
-          status: response.status,
-          resultsCount: response.results?.length ?? 0,
-          message: response.message,
-          sampleKeys: response.results?.slice(0, 5).map((r) => `${r.exchange}:${r.symbol}`) ?? [],
-        })
-      }
 
       if (response.status === 'success' && response.results) {
         const quotesMap = new Map<string, QuotesData>()
@@ -148,43 +142,44 @@ export function useLivePrice<T extends PriceableItem>(
           }
         })
 
-        if (debugLivePrice) {
-          console.debug('[useLivePrice] MultiQuotes mapped', {
-            mappedCount: quotesMap.size,
-          })
-        }
-
         setMultiQuotes(quotesMap)
       }
     } catch (err) {
       // Silently fail - MultiQuotes is a fallback mechanism
-      if (debugLivePrice) {
-        console.debug('[useLivePrice] MultiQuotes fetch failed', err)
-      }
     }
   }, [apiKey, items, useMultiQuotesFallback])
 
   // Fetch MultiQuotes on mount and when items change
+  // Visibility-aware: pause polling when tab is hidden
   useEffect(() => {
     if (!enabled || items.length === 0 || !useMultiQuotesFallback) return
 
-    if (debugLivePrice) {
-      console.debug('[useLivePrice] enabled', {
-        enabled,
-        itemsCount: items.length,
-        apiKeyPresent: Boolean(apiKey),
-        useMultiQuotesFallback,
-      })
-    }
+    // Don't poll when hidden (if pauseWhenHidden is true)
+    if (pauseWhenHidden && !isVisible) return
 
     // Initial fetch
     fetchMultiQuotes()
+    lastFetchRef.current = Date.now()
 
     // Set up periodic refresh
-    const interval = setInterval(fetchMultiQuotes, multiQuotesRefreshInterval)
+    const interval = setInterval(() => {
+      fetchMultiQuotes()
+      lastFetchRef.current = Date.now()
+    }, multiQuotesRefreshInterval)
 
     return () => clearInterval(interval)
-  }, [enabled, items.length, useMultiQuotesFallback, fetchMultiQuotes, multiQuotesRefreshInterval])
+  }, [enabled, items.length, useMultiQuotesFallback, fetchMultiQuotes, multiQuotesRefreshInterval, pauseWhenHidden, isVisible])
+
+  // Refresh MultiQuotes immediately when tab becomes visible after being hidden
+  useEffect(() => {
+    if (!wasHidden || !isVisible || !useMultiQuotesFallback || !enabled) return
+
+    // If we were hidden for more than the refresh interval, fetch immediately
+    if (timeSinceHidden > multiQuotesRefreshInterval) {
+      fetchMultiQuotes()
+      lastFetchRef.current = Date.now()
+    }
+  }, [wasHidden, isVisible, timeSinceHidden, multiQuotesRefreshInterval, useMultiQuotesFallback, enabled, fetchMultiQuotes])
 
   /**
    * Enhance items with real-time LTP and recalculated P&L
@@ -194,15 +189,6 @@ export function useLivePrice<T extends PriceableItem>(
    * For closed positions (qty = 0): P&L and P&L% from REST API (realized values)
    */
   const enhancedData = useMemo(() => {
-    if (debugLivePrice && enabled && items.length > 0) {
-      console.debug('[useLivePrice] enhance items', {
-        itemsCount: items.length,
-        wsConnected,
-        marketDataKeysSample: Array.from(marketData.keys()).slice(0, 5),
-        multiQuotesKeysSample: Array.from(multiQuotes.keys()).slice(0, 5),
-      })
-    }
-
     return items.map((item) => {
       const key = `${item.exchange}:${item.symbol}`
       const wsData = marketData.get(key)
@@ -229,10 +215,6 @@ export function useLivePrice<T extends PriceableItem>(
       let currentLtp: number | undefined
       let dataSource: 'websocket' | 'multiquotes' | 'rest' = 'rest'
 
-      const wsAgeMs = wsData?.lastUpdate ? Date.now() - wsData.lastUpdate : null
-      const wsLtp = wsData?.data?.ltp
-      const mqLtp = mqData?.ltp
-
       if (hasWsData && wsData?.data?.ltp) {
         currentLtp = wsData.data.ltp
         dataSource = 'websocket'
@@ -242,29 +224,6 @@ export function useLivePrice<T extends PriceableItem>(
       } else {
         currentLtp = item.ltp
         dataSource = 'rest'
-      }
-
-      if (debugLivePrice) {
-        // Log decision inputs for debugging tick issues (limited to first 5 items to reduce noise)
-        const idx = items.indexOf(item)
-        if (idx > -1 && idx < 5) {
-          console.debug('[useLivePrice] decision', {
-            key,
-            exchange: item.exchange,
-            exchangeMarketOpen,
-            staleThreshold,
-            wsConnected,
-            wsHasData: Boolean(wsData),
-            wsLtp,
-            wsAgeMs,
-            mqHasData: Boolean(mqData),
-            mqLtp,
-            hasWsData,
-            hasMqData,
-            selectedSource: dataSource,
-            selectedLtp: currentLtp,
-          })
-        }
       }
 
       // For closed positions (qty=0), preserve ALL REST API values including LTP.
@@ -322,6 +281,7 @@ export function useLivePrice<T extends PriceableItem>(
     data: enhancedData,
     isLive,
     isConnected: wsConnected,
+    isPaused: wsPaused,
     isAnyMarketOpen: anyMarketOpen,
     multiQuotes,
     refreshMultiQuotes: fetchMultiQuotes,

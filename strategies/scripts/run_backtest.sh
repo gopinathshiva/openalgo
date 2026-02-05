@@ -27,17 +27,17 @@ fi
 # Export the API key for the backtester to use
 export OPENALGO_API_KEY="$API_KEY"
 
-# Ensure tmp_rovodev_backtest_config.json has config set to "strategy_config.json"
-if [ -f "tmp_rovodev_backtest_config.json" ]; then
+# Ensure backtest_config.json has config set to "strategy_config.json"
+if [ -f "backtest_config.json" ]; then
     # Use jq for safe JSON manipulation with atomic write
     TMP_FILE=$(mktemp)
-    jq '.config = "strategy_config.json"' tmp_rovodev_backtest_config.json > "$TMP_FILE"
-    mv "$TMP_FILE" tmp_rovodev_backtest_config.json
-    echo "Updated tmp_rovodev_backtest_config.json to reference strategy_config.json"
+    jq '.config = "strategy_config.json"' backtest_config.json > "$TMP_FILE"
+    mv "$TMP_FILE" backtest_config.json
+    echo "Updated backtest_config.json to reference strategy_config.json"
 fi
 
 echo "Running backtester with API key from strategy_config.json..."
-echo "Using backtest config: tmp_rovodev_backtest_config.json"
+echo "Using backtest config: backtest_config.json"
 echo ""
 
 # Run the backtester
