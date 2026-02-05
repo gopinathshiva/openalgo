@@ -120,16 +120,37 @@ export async function createManualStrategyLeg(
 export async function manualExitLeg(
   instanceId: string,
   legKey: string,
-  exitPrice: number,
-  exitStatus: 'SL_HIT' | 'TARGET_HIT'
+  exitPrice: number | null,
+  exitStatus: 'SL_HIT' | 'TARGET_HIT' | null,
+  exitAtMarket: boolean = false
 ): Promise<{ message: string }> {
   try {
+    const requestBody: {
+      exit_price?: number
+      exit_status?: string
+      exit_at_market?: boolean
+    } = {}
+    
+    if (exitAtMarket) {
+      requestBody.exit_at_market = true
+      // exit_status is optional for market exits, defaults to MANUAL_EXIT on backend
+      if (exitStatus) {
+        requestBody.exit_status = exitStatus
+      }
+    } else {
+      // For manual price exits, exit_status is required
+      if (!exitStatus) {
+        throw new Error('Exit status is required for manual price exits')
+      }
+      requestBody.exit_status = exitStatus
+      if (exitPrice !== null) {
+        requestBody.exit_price = exitPrice
+      }
+    }
+    
     const response = await webClient.post<{ status: string; message?: string }>(
       `/api/strategy-state/${encodeURIComponent(instanceId)}/leg/${encodeURIComponent(legKey)}/manual-exit`,
-      {
-        exit_price: exitPrice,
-        exit_status: exitStatus
-      }
+      requestBody
     )
     if (response.data.status === 'error') {
       throw new Error(response.data.message || 'Failed to exit position')
