@@ -84,7 +84,7 @@ class StrategyOverride(Base):
     id = Column(Integer, primary_key=True)
     instance_id = Column(String(100), nullable=False, index=True)
     leg_key = Column(String(100), nullable=False)
-    override_type = Column(String(20), nullable=False)  # 'sl_price' or 'target_price'
+    override_type = Column(String(20), nullable=False)  # 'sl_price', 'target_price', 'MANUAL_EXIT', 'MANUAL_SYNC'
     new_value = Column(Float, nullable=False)
     applied = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, nullable=False)
@@ -465,7 +465,7 @@ def create_strategy_override(instance_id: str, leg_key: str, override_type: str,
     Args:
         instance_id: The strategy instance ID
         leg_key: The leg identifier (e.g., "CE_SPREAD_CE_SELL")
-        override_type: Either 'sl_price' or 'target_price' (validated by API layer)
+        override_type: Either 'sl_price', 'target_price', 'MANUAL_EXIT', or 'MANUAL_SYNC'
         new_value: The new price value (validated by API layer)
 
     Returns:
