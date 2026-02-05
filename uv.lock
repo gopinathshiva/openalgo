@@ -1714,8 +1714,8 @@ requires-dist = [
     { name = "psutil", specifier = "==7.2.1" },
     { name = "ptyprocess", specifier = "==0.7.0" },
     { name = "pure-eval", specifier = "==0.2.3" },
-    { name = "py-lets-be-rational", git = "https://github.com/vollib/py_lets_be_rational.git" },
-    { name = "py-vollib", git = "https://github.com/vollib/py_vollib.git" },
+    { name = "py-lets-be-rational", git = "https://github.com/vollib/py_lets_be_rational.git?rev=b85a0d87fe2ba6d0525c76ee936999599deb39d7" },
+    { name = "py-vollib", git = "https://github.com/vollib/py_vollib.git?rev=9fbc623dbc8d7241b935da440a722b49186b9bb1" },
     { name = "pyarrow", specifier = "==22.0.0" },
     { name = "pycparser", specifier = "==2.22" },
     { name = "pydantic", specifier = "==2.12.5" },
@@ -2159,7 +2159,7 @@ wheels = [
 [[package]]
 name = "py-lets-be-rational"
 version = "1.0.3"
-source = { git = "https://github.com/vollib/py_lets_be_rational.git#b85a0d87fe2ba6d0525c76ee936999599deb39d7" }
+source = { git = "https://github.com/vollib/py_lets_be_rational.git?rev=b85a0d87fe2ba6d0525c76ee936999599deb39d7#b85a0d87fe2ba6d0525c76ee936999599deb39d7" }
 dependencies = [
     { name = "numpy" },
 ]
@@ -2179,7 +2179,7 @@ wheels = [
 [[package]]
 name = "py-vollib"
 version = "1.0.3"
-source = { git = "https://github.com/vollib/py_vollib.git#9fbc623dbc8d7241b935da440a722b49186b9bb1" }
+source = { git = "https://github.com/vollib/py_vollib.git?rev=9fbc623dbc8d7241b935da440a722b49186b9bb1#9fbc623dbc8d7241b935da440a722b49186b9bb1" }
 dependencies = [
     { name = "numpy" },
     { name = "pandas" },
