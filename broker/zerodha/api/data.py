@@ -10,7 +10,6 @@ from broker.zerodha.database.master_contract_db import SymToken, db_session
 from database.token_db import get_br_symbol, get_oa_symbol
 from utils.httpx_client import get_httpx_client
 from utils.logging import get_logger
-from ..credential_manager import get_shared_auth_token
 
 logger = get_logger(__name__)
 
@@ -44,11 +43,6 @@ def get_api_response(endpoint, auth, method="GET", payload=None):
         ZerodhaPermissionError: For permission-related errors
         ZerodhaAPIError: For other API errors
     """
-    # Check for shared credentials override
-    shared_auth = get_shared_auth_token(auth)
-    if shared_auth:
-        auth = shared_auth
-    
     AUTH_TOKEN = auth
     base_url = "https://api.kite.trade"
 

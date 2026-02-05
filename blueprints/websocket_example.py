@@ -164,38 +164,22 @@ def api_websocket_market_data():
 
 @websocket_bp.route("/api/websocket/apikey", methods=["GET"])
 def api_get_websocket_apikey():
-    """Get API key for WebSocket authentication from shared credentials file"""
+    """Get API key for WebSocket authentication"""
     username = get_username_from_session()
     if not username:
         return jsonify(
             {"status": "error", "message": "Session not found - please refresh page"}
         ), 401
 
-    # Try to load from shared credentials file first (uses cached credentials)
-    try:
-        from broker.zerodha.credential_manager import get_shared_openalgo_api_key
-        
-        api_key = get_shared_openalgo_api_key()
-        if api_key:
-            logger.info("Loaded API key from shared credentials file for WebSocket authentication")
-            return jsonify({"status": "success", "api_key": api_key}), 200
-    except ImportError:
-        # credential_manager not available (non-Zerodha broker)
-        pass
-    except Exception as e:
-        logger.warning(f"Could not load API key from shared credentials: {e}")
-    
-    # Fallback to database lookup if shared credentials not available
     from database.auth_db import get_api_key_for_tradingview
 
     api_key = get_api_key_for_tradingview(username)
 
     if not api_key:
         return jsonify(
-            {"status": "error", "message": "No API key found. Please generate an API key first or configure SHARED_CREDENTIALS_FILE."}
+            {"status": "error", "message": "No API key found. Please generate an API key first."}
         ), 404
 
-    logger.info("Loaded API key from database for WebSocket authentication")
     return jsonify({"status": "success", "api_key": api_key}), 200
 
 

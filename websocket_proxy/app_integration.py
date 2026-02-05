@@ -219,24 +219,6 @@ def start_websocket_proxy(app):
     """
     global _websocket_server_started
 
-    # Check if shared credentials mode is enabled
-    shared_credentials_file = os.getenv('SHARED_CREDENTIALS_FILE')
-    
-    if shared_credentials_file:
-        # In shared credentials mode, check if port is already in use
-        # If yes, skip starting server (connect as client only)
-        # If no, start the server (this is the first instance)
-        from .port_check import is_port_in_use
-        ws_host = os.getenv("WEBSOCKET_HOST", "127.0.0.1")
-        ws_port = int(os.getenv("WEBSOCKET_PORT", "8765"))
-        
-        if is_port_in_use(ws_host, ws_port, wait_time=1.0):
-            logger.info(f"Shared credentials mode: WebSocket server already running on {ws_host}:{ws_port}. This instance will connect as a client.")
-            return  # Don't start server, just act as client
-        else:
-            logger.info(f"Shared credentials mode: Starting WebSocket server on {ws_host}:{ws_port} (first instance).")
-            # Fall through to start server normally
-
     # Check if this process should start the WebSocket server
     if should_start_websocket():
         # Our flag will prevent multiple starts if called multiple times
