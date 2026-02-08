@@ -50,8 +50,17 @@ const Playground = lazy(() => import('@/pages/Playground'))
 const Historify = lazy(() => import('@/pages/Historify'))
 const HistorifyCharts = lazy(() => import('@/pages/HistorifyCharts'))
 
-// Option Chain
+// Tools & Option Chain
+const Tools = lazy(() => import('@/pages/Tools'))
 const OptionChain = lazy(() => import('@/pages/OptionChain'))
+const IVChart = lazy(() => import('@/pages/IVChart'))
+const OITracker = lazy(() => import('@/pages/OITracker'))
+const MaxPain = lazy(() => import('@/pages/MaxPain'))
+const StraddleChart = lazy(() => import('@/pages/StraddleChart'))
+const VolSurface = lazy(() => import('@/pages/VolSurface'))
+const GEXDashboard = lazy(() => import('@/pages/GEXDashboard'))
+const IVSmile = lazy(() => import('@/pages/IVSmile'))
+const OIProfile = lazy(() => import('@/pages/OIProfile'))
 
 // Strategy pages
 const StrategyIndex = lazy(() => import('@/pages/strategy/StrategyIndex'))
@@ -143,7 +152,16 @@ function App() {
                 <Route path="/sandbox" element={<Sandbox />} />
                 <Route path="/sandbox/mypnl" element={<SandboxPnL />} />
                 <Route path="/analyzer" element={<Analyzer />} />
+                <Route path="/tools" element={<Tools />} />
                 <Route path="/optionchain" element={<OptionChain />} />
+                <Route path="/ivchart" element={<IVChart />} />
+                <Route path="/oitracker" element={<OITracker />} />
+                <Route path="/maxpain" element={<MaxPain />} />
+                <Route path="/straddle" element={<StraddleChart />} />
+                <Route path="/volsurface" element={<VolSurface />} />
+                <Route path="/gex" element={<GEXDashboard />} />
+                <Route path="/ivsmile" element={<IVSmile />} />
+                <Route path="/oiprofile" element={<OIProfile />} />
                 <Route path="/websocket/test" element={<WebSocketTest />} />
                 <Route path="/websocket/test/20" element={<WebSocketTest depthLevel={20} />} />
                 <Route path="/websocket/test/30" element={<WebSocketTest depthLevel={30} />} />
