@@ -1,39 +1,35 @@
 {
-    "API_KEY": "b0b33f31812c948e90620949200ff0542c2a6432b409a07a4495daebd91b549f",
+    "API_KEY": "fb77b2df614f43f607c3cd7543200a3d0b7f8e133701ed40bebeceb901b4d440",
     "HOST": "http://127.0.0.1:3300",
-    "STRATEGY_NAME": "EXIT CHECK 3",
-    "LOTS": 5,
-    "LOT_SIZE": 20,
+    "STRATEGY_NAME": "WTT OTM STRANGLE",
+    "LOTS": 1,
+    "LOT_SIZE": 65,
     "REENTRY_LIMIT": 4,
-    "UNDERLYING": "SENSEX",
-    "UNDERLYING_EXCHANGE": "BSE_INDEX",
-    "OPTIONS_EXCHANGE": "BFO",
-    "EXPIRY_DATE": "05FEB26",
+    "UNDERLYING": "NIFTY",
+    "UNDERLYING_EXCHANGE": "NSE_INDEX",
+    "OPTIONS_EXCHANGE": "NFO",
+    "EXPIRY_DATE": "10FEB26",
     "PRODUCT": "NRML",
     "POLL_INTERVAL": 1,
-    "DETAILED_LOGGING": true,
+    "DETAILED_LOGGING": false,
     "PERSIST_CYCLES": 3,
     "USE_WEBSOCKET": false,
-    "PRICE_TYPE": "LIMIT",
-    "USE_FILL_PRICE_CONFIRMATION": true,
-    "FILL_PRICE_MAX_RETRIES": 5,
-    "FILL_PRICE_RETRY_SLEEP": 0.5,
+    "entry_time": "11:00",
+    "exit_time": "15:25",
     "legs": [
         {
             "name": "CE_LEG",
-            "ce_sell_offset": "ATM",
-            "sl_percent": 0.3,
-            "reentry_limit": 2,
-            "target_percent": 0.3,
-            "reexecute_limit": 2
+            "ce_sell_offset": "OTM3",
+            "sl_percent": 1,
+            "wait_trade_percentage": 0.10,
+            "reentry_limit": 1
         },
         {
             "name": "PE_LEG",
-            "pe_sell_offset": "ATM",
-            "sl_percent": 0.3,
-            "reentry_limit": 2,
-            "target_percent": 0.3,
-            "reexecute_limit": 2
+            "pe_sell_offset": "OTM3",
+            "sl_percent": 1,
+            "wait_trade_percentage": 0.10,
+            "reentry_limit": 1
         }
     ]
 }
