@@ -17,8 +17,8 @@ from openalgo import api, ta
 from plotly.subplots import make_subplots
 
 # ───────────────────────── CONFIG ─────────────────────────
-API_KEY = "dfae8e3a1ce08f60754b0d3597553d7c14957542104b431e4b881c089864a35e"
-API_HOST = "http://127.0.0.1:5000"
+API_KEY = "fb77b2df614f43f607c3cd7543200a3d0b7f8e133701ed40bebeceb901b4d440"
+API_HOST = "http://127.0.0.1:3300"
 
 SYMBOL = "SBIN"
 EXCHANGE = "NSE"
@@ -43,9 +43,9 @@ client = api(api_key=API_KEY, host=API_HOST)
 
 # ───────────────────── FETCH HISTORICAL DATA ─────────────────────
 def fetch_historical_data():
-    """Fetch 5m historical data for RELIANCE (1 year)"""
+    """Fetch historical data for the symbol (1 year)"""
     print(f"\nFetching {SYMBOL} {INTERVAL} data from {START_DATE} to {END_DATE}...")
-    print("This may take a moment for 1 year of 5m data...")
+    print("This may take a moment for 1 year of data...")
 
     response = client.history(
         symbol=SYMBOL,
@@ -53,29 +53,47 @@ def fetch_historical_data():
         interval=INTERVAL,
         start_date=START_DATE,
         end_date=END_DATE,
-        source = "db"
+        source="api"
     )
 
-    # Print the raw response info
-    print(f"History Response received: {type(response)}")
+    # Print the raw response info for debugging
+    print(f"History Response type: {type(response)}")
 
-    # OpenAlgo history() returns DataFrame directly
+    # Handle response format
     if isinstance(response, pd.DataFrame):
+        # If SDK returns DataFrame directly
         df = response.copy()
+    elif isinstance(response, dict):
+        # If SDK returns dict with 'data' key
+        if response.get("status") == "error":
+            raise ValueError(f"API Error: {response.get('message', 'Unknown error')}")
+
+        data = response.get("data", [])
+        if not data:
+            raise ValueError("No data received from API - response contains empty data")
+
+        # Create DataFrame from list of records
+        df = pd.DataFrame(data)
     else:
-        df = pd.DataFrame(response.get("data", response))
+        raise ValueError(f"Unexpected response type: {type(response)}")
 
     if df.empty:
-        raise ValueError("No data received from API")
+        raise ValueError("No data received - DataFrame is empty")
 
-    # Handle index
-    if df.index.name == "timestamp" or "timestamp" not in df.columns:
-        df.index = pd.to_datetime(df.index)
-    else:
-        df["datetime"] = pd.to_datetime(df["timestamp"])
+    # Handle timestamp/datetime index
+    if "timestamp" in df.columns:
+        df["datetime"] = pd.to_datetime(df["timestamp"], unit="s")
         df = df.set_index("datetime")
+    elif df.index.name == "timestamp":
+        df.index = pd.to_datetime(df.index, unit="s")
+        df.index.name = "datetime"
+    else:
+        # Assume index is already datetime
+        df.index = pd.to_datetime(df.index)
 
     df = df.sort_index()
+
+    # Ensure column names are lowercase
     df.columns = df.columns.str.lower()
 
     # Ensure timezone-naive for VectorBT compatibility

@@ -152,6 +152,7 @@ dependencies = [
   "WTForms==3.2.1",
   "zipp==3.23.0",
   "zmq==0.0.0",
+  "vectorbt>=0.28.4",
 ]
 
 [build-system]
