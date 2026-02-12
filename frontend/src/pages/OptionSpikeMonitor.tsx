@@ -57,18 +57,18 @@ import { cn } from '@/lib/utils'
 
 // Types
 interface MonitorConfig {
-    exchange: string
+    exchange: 'NFO' | 'BFO' | 'CDS' | 'MCX'
     underlying: string
     expiry: string
     strikeCount: number
     distanceThreshold: number
     premiumThreshold: number
     ivThreshold: number
-    ivRefreshSeconds: number
     spikeReference: 'OPEN' | 'PREV_CLOSE' | 'LAST_X_MIN'
     lastXMinutes: number
     spikeThresholdPercent: number
     skipIvWhenDistanceFail: boolean
+    skipIvWhenPremiumFail: boolean
 }
 
 interface MonitoredStrike {
@@ -112,11 +112,11 @@ const DEFAULT_CONFIG: MonitorConfig = {
     distanceThreshold: 500,
     premiumThreshold: 5,
     ivThreshold: 30,
-    ivRefreshSeconds: 30,
     spikeReference: 'OPEN',
     lastXMinutes: 5,
     spikeThresholdPercent: 10,
     skipIvWhenDistanceFail: false,
+    skipIvWhenPremiumFail: false,
 }
 
 const FNO_EXCHANGES = [
@@ -135,13 +135,24 @@ export default function OptionSpikeMonitor() {
     // Data State
     const [underlyings, setUnderlyings] = useState<string[]>([])
     const [expiries, setExpiries] = useState<string[]>([])
+    const [selectedUnderlying, setSelectedUnderlying] = useState('')
+    const [selectedExpiry, setSelectedExpiry] = useState('')
     const [optionChain, setOptionChain] = useState<OptionChainResponse | null>(null)
     const [ivData, setIvData] = useState<Record<string, number>>({})
     const [ivSummary, setIvSummary] = useState<IvSummary | null>(null)
     const [tickTimes, setTickTimes] = useState<Record<string, number>>({})
     const [referenceSnapshots, setReferenceSnapshots] = useState<Record<string, ReferenceSnapshot>>({})
+    const [isFetchingIv, setIsFetchingIv] = useState(false)
     const ivRetryTimeoutRef = useRef<number | null>(null)
     const ivRetrySymbolsRef = useRef<Record<string, { symbol: string; exchange: string }>>({})
+
+    const getUnderlyingExchange = useCallback((exchange: MonitorConfig['exchange']) => {
+        if (exchange === 'NFO') return 'NSE_INDEX'
+        if (exchange === 'BFO') return 'BSE_INDEX'
+        if (exchange === 'CDS') return 'CDS'
+        if (exchange === 'MCX') return 'MCX'
+        return 'NSE_INDEX'
+    }, [])
 
     // Helper state
     const [underlyingOpen, setUnderlyingOpen] = useState(false)
@@ -157,7 +168,7 @@ export default function OptionSpikeMonitor() {
         // Add underlying for spot price
         symbols.push({
             symbol: config.underlying,
-            exchange: config.exchange === 'NFO' ? 'NSE_INDEX' : 'BSE_INDEX' // Simple logic, might need refinement
+            exchange: config.exchange
         })
         return symbols
     }, [monitoredStrikes, config.exchange, config.underlying])
@@ -185,11 +196,16 @@ export default function OptionSpikeMonitor() {
                 const response = await oiProfileApi.getUnderlyings(config.exchange)
                 if (response.status === 'success') {
                     setUnderlyings(response.underlyings)
-                    // Set default if current not in list
-                    if (!response.underlyings.includes(config.underlying)) {
-                        const defaultUnderlying = config.exchange === 'BFO'
-                            ? (response.underlyings.includes('SENSEX') ? 'SENSEX' : response.underlyings[0] || '')
-                            : (response.underlyings[0] || '')
+                    if (!response.underlyings.includes(selectedUnderlying)) {
+                        let defaultUnderlying = ''
+                        if (config.exchange === 'BFO') {
+                            defaultUnderlying = response.underlyings.includes('SENSEX') ? 'SENSEX' : response.underlyings[0] || ''
+                        } else if (config.exchange === 'NFO') {
+                            defaultUnderlying = response.underlyings.includes('NIFTY') ? 'NIFTY' : response.underlyings[0] || ''
+                        } else {
+                            defaultUnderlying = response.underlyings[0] || ''
+                        }
+                        setSelectedUnderlying(defaultUnderlying)
                         setConfig(prev => ({ ...prev, underlying: defaultUnderlying }))
                     }
                 }
@@ -198,7 +214,7 @@ export default function OptionSpikeMonitor() {
             }
         }
         fetchUnderlyings()
-    }, [config.exchange])
+    }, [config.exchange, selectedUnderlying])
 
     // Load Expiries
     useEffect(() => {
@@ -208,14 +224,18 @@ export default function OptionSpikeMonitor() {
                 const response = await oiProfileApi.getExpiries(config.exchange, config.underlying)
                 if (response.status === 'success') {
                     setExpiries(response.expiries)
-                    setConfig(prev => ({ ...prev, expiry: response.expiries[0] || '' }))
+                    if (!response.expiries.includes(selectedExpiry)) {
+                        const defaultExpiry = response.expiries[0] || ''
+                        setSelectedExpiry(defaultExpiry)
+                        setConfig(prev => ({ ...prev, expiry: defaultExpiry }))
+                    }
                 }
             } catch (err) {
                 console.error('Failed to fetch expiries', err)
             }
         }
         fetchExpiries()
-    }, [config.exchange, config.underlying])
+    }, [config.exchange, config.underlying, selectedExpiry])
 
     const fetchReferenceSnapshot = useCallback(async (symbols: { symbol: string; exchange: string }[]) => {
         if (!apiKey) {
@@ -265,37 +285,65 @@ export default function OptionSpikeMonitor() {
     }, [apiKey, config.lastXMinutes])
 
     // Fetch IV Data (Multi-Option Greeks)
-    const fetchIvData = useCallback(async (overrideSymbols?: { symbol: string; exchange: string }[]) => {
+    const fetchIvData = useCallback(async (overrideSymbols?: { symbol: string; exchange: string }[], strikesList?: MonitoredStrike[]) => {
+        const activeStrikes = strikesList ?? monitoredStrikes
+        console.log('[OptionSpikeMonitor][fetchIvData] ENTRY - apiKey:', !!apiKey, 'activeStrikes:', activeStrikes.length, 'override:', overrideSymbols?.length)
+        
         if (!apiKey) {
-            console.log('[OptionSpikeMonitor] fetchIvData SKIPPED - no API key')
+            console.log('[OptionSpikeMonitor][fetchIvData] SKIPPED - no API key')
             return
         }
-        if (!overrideSymbols && monitoredStrikes.length === 0) {
-            console.log('[OptionSpikeMonitor] fetchIvData SKIPPED - no monitored strikes')
+        if (!overrideSymbols && activeStrikes.length === 0) {
+            console.log('[OptionSpikeMonitor][fetchIvData] SKIPPED - no monitored strikes')
             return
         }
 
+        setIsFetchingIv(true)
         try {
             const spotPrice = wsData.get(
-                `${config.exchange === 'NFO' ? 'NSE_INDEX' : 'BSE_INDEX'}:${config.underlying}`
+                `${getUnderlyingExchange(config.exchange)}:${config.underlying}`
             )?.data?.ltp ?? optionChain?.underlying_ltp
+
+            console.log('[OptionSpikeMonitor][fetchIvData] spotPrice:', spotPrice, 'wsData size:', wsData.size, 'optionChain?.underlying_ltp:', optionChain?.underlying_ltp)
 
             const symbols = overrideSymbols && overrideSymbols.length > 0
                 ? overrideSymbols
-                : monitoredStrikes
+                : activeStrikes
                     .filter(s => {
-                        if (!config.skipIvWhenDistanceFail || spotPrice === undefined) {
-                            return true
+                        if (spotPrice === undefined) {
+                            const allow = !config.skipIvWhenDistanceFail
+                            console.log('[OptionSpikeMonitor][fetchIvData] spotPrice undefined, skipIvWhenDistanceFail:', config.skipIvWhenDistanceFail, 'allow:', allow)
+                            return allow
                         }
-                        const distance = Math.abs(spotPrice - s.strike)
-                        return distance > config.distanceThreshold
+
+                        if (config.skipIvWhenDistanceFail) {
+                            const distance = Math.abs(spotPrice - s.strike)
+                            if (distance <= config.distanceThreshold) {
+                                console.log('[OptionSpikeMonitor][fetchIvData] FILTERED OUT (distance):', s.symbol, 'distance:', distance, 'threshold:', config.distanceThreshold)
+                                return false
+                            }
+                        }
+
+                        if (config.skipIvWhenPremiumFail) {
+                            const wsKey = `${config.exchange}:${s.symbol}`
+                            const ltp = wsData.get(wsKey)?.data?.ltp ?? 0
+                            if (ltp <= config.premiumThreshold) {
+                                console.log('[OptionSpikeMonitor][fetchIvData] FILTERED OUT (premium):', s.symbol, 'ltp:', ltp, 'threshold:', config.premiumThreshold)
+                                return false
+                            }
+                        }
+
+                        return true
                     })
                     .map(s => ({
                         symbol: s.symbol,
                         exchange: config.exchange
                     }))
 
+            console.log('[OptionSpikeMonitor][fetchIvData] Filtered symbols count:', symbols.length)
+
             if (symbols.length === 0) {
+                console.log('[OptionSpikeMonitor][fetchIvData] SKIPPED - no symbols after filtering')
                 return
             }
 
@@ -345,13 +393,18 @@ export default function OptionSpikeMonitor() {
                                 fetchIvData(retrySymbols)
                             }
                         }, 5000)
+                    } else {
+                        setIsFetchingIv(false)
                     }
+                } else {
+                    setIsFetchingIv(false)
                 }
             }
         } catch (err) {
             console.error('[OptionSpikeMonitor] Error fetching IV data', err)
+            setIsFetchingIv(false)
         }
-    }, [apiKey, monitoredStrikes, config.exchange])
+    }, [apiKey, monitoredStrikes, config.exchange, config.underlying, config.skipIvWhenDistanceFail, config.skipIvWhenPremiumFail, config.distanceThreshold, config.premiumThreshold, wsData, optionChain, getUnderlyingExchange])
 
     // Start Monitoring Logic
     const handleStart = async () => {
@@ -423,8 +476,11 @@ export default function OptionSpikeMonitor() {
                 }
 
                 // Initial IV Fetch
-                console.log('[OptionSpikeMonitor] Scheduling initial IV fetch in 1s, apiKey available:', !!apiKey)
-                setTimeout(fetchIvData, 1000)
+                console.log('[OptionSpikeMonitor][handleStart] Scheduling initial IV fetch in 1s, apiKey available:', !!apiKey, 'strikes count:', strikes.length)
+                setTimeout(() => {
+                    console.log('[OptionSpikeMonitor][handleStart] FIRING initial IV fetch now with', strikes.length, 'strikes')
+                    fetchIvData(undefined, strikes)
+                }, 1000)
             } else {
                 showToast.error('No option chain data found')
             }
@@ -443,22 +499,14 @@ export default function OptionSpikeMonitor() {
         setReferenceSnapshots({})
     }
 
-    // Periodic Tasks (IV Fetch & Tick Clean up)
+    // Cleanup on stop
     useEffect(() => {
-        if (!isMonitoring) return
-
-        const refreshMs = Math.max(config.ivRefreshSeconds, 5) * 1000
-        const intervalId = setInterval(() => {
-            fetchIvData()
-        }, refreshMs) // Fetch IV based on user config
-
-        return () => {
-            clearInterval(intervalId)
+        if (!isMonitoring) {
             if (ivRetryTimeoutRef.current) {
                 window.clearTimeout(ivRetryTimeoutRef.current)
             }
         }
-    }, [isMonitoring, monitoredStrikes, config.ivRefreshSeconds, fetchIvData])
+    }, [isMonitoring])
 
     useEffect(() => {
         if (!isMonitoring || config.spikeReference !== 'LAST_X_MIN') {
@@ -495,44 +543,36 @@ export default function OptionSpikeMonitor() {
 
 
     // Calculate Table Rows
+    const {
+        distanceThreshold,
+        premiumThreshold,
+        ivThreshold,
+        spikeThresholdPercent,
+        spikeReference,
+        exchange,
+        underlying,
+    } = config
+
     const tableRows = useMemo(() => {
         if (!optionChain || !monitoredStrikes.length) return []
 
         const spotPrice = wsData.get(
-            `${config.exchange === 'NFO' ? 'NSE_INDEX' : 'BSE_INDEX'}:${config.underlying}`
+            `${getUnderlyingExchange(exchange)}:${underlying}`
         )?.data?.ltp ?? optionChain.underlying_ltp
 
         const rows: (MonitoredStrike & StrikeStatus)[] = monitoredStrikes.map(s => {
-            const wsKey = `${config.exchange}:${s.symbol}`
+            const wsKey = `${exchange}:${s.symbol}`
             const ltp = wsData.get(wsKey)?.data?.ltp ?? 0
 
             const distance = Math.abs(spotPrice - s.strike)
             const currentIv = ivData[s.symbol]
-            // Spike Calc: ((Current - Ref) / Ref) * 100
-            // NOTE: Reference price logic is currently based on Underlying. 
-            // Requirement says "Spike % Threshold: Minimum percentage spike from the reference price."
-            // Typically spike monitor checks OPTION PREMIUM spike.
-            // So Reference Price should be the Reference Price of the OPTION, not Underlying?
-            // Re-reading requirements: "Spike % Threshold: ... Calculated using historical data API for the reference price."
-            // Reference options: Today's Open, Yesterday's Close.
-            // This usually implies fetching OHLC for the *Option Symbol*.
-            // My fetchReferencePrice above fetched Underlying. I should fetch for *each option*?
-            // Fetching history for 20+ options might be heavy. But necessary for correct Spike %.
-            // Let's assume for V1 we used 0 as placeholder or implement per-symbol fetch if feasible.
 
-            // Correction: To be accurate, we need the reference price FOR THE OPTION.
-            // We can't fetch history for 20 symbols efficiently in one go unless we loop.
-            // OR allow "Reference" to be "Underlying Spike" -> but likely user wants Option Spike.
-            // Ideally we fetch Prev Close from Option Chain itself (it has 'prev_close' and 'open').
-            // Let's use OptionChain data for Open/PrevClose if available to avoid API spam.
-
-            // Finding initial static data from chain
             const chainItem = optionChain.chain.find(i => i.strike === s.strike)
             const optionData = s.type === 'CE' ? chainItem?.ce : chainItem?.pe
 
             let optionRefPrice = 0
-            if (config.spikeReference === 'OPEN') optionRefPrice = optionData?.open ?? 0
-            else if (config.spikeReference === 'PREV_CLOSE') optionRefPrice = optionData?.prev_close ?? 0
+            if (spikeReference === 'OPEN') optionRefPrice = optionData?.open ?? 0
+            else if (spikeReference === 'PREV_CLOSE') optionRefPrice = optionData?.prev_close ?? 0
             else {
                 optionRefPrice = referenceSnapshots[s.symbol]?.price ?? 0
             }
@@ -545,10 +585,10 @@ export default function OptionSpikeMonitor() {
             const lastTick = tickTimes[s.symbol] ?? 0
             const isLive = Date.now() - lastTick < 30000 // 30s heartbeat
 
-            const isDistancePass = distance > config.distanceThreshold
-            const isPremiumPass = ltp > config.premiumThreshold
-            const isIvPass = currentIv !== undefined && currentIv > config.ivThreshold
-            const isSpikePass = spikePercent > config.spikeThresholdPercent
+            const isDistancePass = distance > distanceThreshold
+            const isPremiumPass = ltp > premiumThreshold
+            const isIvPass = currentIv !== undefined && currentIv > ivThreshold
+            const isSpikePass = spikePercent > spikeThresholdPercent
             const isHistoryPass = isLive
 
             const isAllPass = isDistancePass && isPremiumPass && isIvPass && isSpikePass && isHistoryPass
@@ -570,24 +610,56 @@ export default function OptionSpikeMonitor() {
         })
 
         return rows
-            .filter(row => row.isDistancePass)
+            .filter(row => {
+                if (config.skipIvWhenDistanceFail && !row.isDistancePass) return false
+                if (config.skipIvWhenPremiumFail && !row.isPremiumPass) return false
+                return true
+            })
             .sort((a, b) => {
                 if (a.isAllPass !== b.isAllPass) {
                     return a.isAllPass ? -1 : 1
                 }
                 return a.strike - b.strike
             })
-    }, [monitoredStrikes, wsData, optionChain, tickTimes, ivData, config])
+    }, [monitoredStrikes, wsData, optionChain, tickTimes, ivData, referenceSnapshots, distanceThreshold, premiumThreshold, ivThreshold, spikeThresholdPercent, spikeReference, exchange, underlying, getUnderlyingExchange, config.skipIvWhenPremiumFail, config.skipIvWhenDistanceFail])
 
-    const hiddenDistanceCount = useMemo(() => {
-        if (!optionChain || !monitoredStrikes.length) return 0
+    const hiddenCounts = useMemo(() => {
+        if (!optionChain || !monitoredStrikes.length) return { distance: 0, premium: 0 }
 
         const spotPrice = wsData.get(
-            `${config.exchange === 'NFO' ? 'NSE_INDEX' : 'BSE_INDEX'}:${config.underlying}`
+            `${getUnderlyingExchange(config.exchange)}:${config.underlying}`
         )?.data?.ltp ?? optionChain.underlying_ltp
 
-        return monitoredStrikes.filter(s => Math.abs(spotPrice - s.strike) <= config.distanceThreshold).length
-    }, [monitoredStrikes, wsData, optionChain, config])
+        let distanceCount = 0
+        let premiumCount = 0
+
+        // Only count hidden strikes when respective switches are enabled
+        if (config.skipIvWhenDistanceFail || config.skipIvWhenPremiumFail) {
+            monitoredStrikes.forEach(s => {
+                const distance = Math.abs(spotPrice - s.strike)
+                const isDistanceFail = distance <= distanceThreshold
+                
+                const wsKey = `${config.exchange}:${s.symbol}`
+                const ltp = wsData.get(wsKey)?.data?.ltp ?? 0
+                const isPremiumFail = ltp <= premiumThreshold
+
+                // Count distance failures (when switch is ON)
+                if (config.skipIvWhenDistanceFail && isDistanceFail) {
+                    distanceCount++
+                }
+                
+                // Count premium failures (when switch is ON and distance passes)
+                // Premium check only matters if distance passed (or distance switch is OFF)
+                if (config.skipIvWhenPremiumFail && isPremiumFail) {
+                    if (!config.skipIvWhenDistanceFail || !isDistanceFail) {
+                        premiumCount++
+                    }
+                }
+            })
+        }
+
+        return { distance: distanceCount, premium: premiumCount }
+    }, [monitoredStrikes, wsData, optionChain, distanceThreshold, premiumThreshold, getUnderlyingExchange, config.exchange, config.underlying, config.skipIvWhenDistanceFail, config.skipIvWhenPremiumFail])
 
     return (
         <div className="py-6 space-y-6">
@@ -612,7 +684,7 @@ export default function OptionSpikeMonitor() {
                             <div className="space-y-2">
                                 <Label>Exchange & Underlying</Label>
                                 <div className="flex gap-2">
-                                    <Select value={config.exchange} onValueChange={(v) => setConfig(p => ({ ...p, exchange: v }))}>
+                                    <Select value={config.exchange} onValueChange={(v) => setConfig(p => ({ ...p, exchange: v as MonitorConfig['exchange'] }))}>
                                         <SelectTrigger className="w-24">
                                             <SelectValue />
                                         </SelectTrigger>
@@ -623,7 +695,7 @@ export default function OptionSpikeMonitor() {
                                     <Popover open={underlyingOpen} onOpenChange={setUnderlyingOpen}>
                                         <PopoverTrigger asChild>
                                             <Button variant="outline" role="combobox" aria-expanded={underlyingOpen} className="flex-1 justify-between">
-                                                {config.underlying || "Select"}
+                                                {selectedUnderlying || "Select"}
                                                 <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                                             </Button>
                                         </PopoverTrigger>
@@ -635,10 +707,11 @@ export default function OptionSpikeMonitor() {
                                                     <CommandGroup>
                                                         {underlyings.map(u => (
                                                             <CommandItem key={u} value={u} onSelect={() => {
+                                                                setSelectedUnderlying(u)
                                                                 setConfig(p => ({ ...p, underlying: u }))
                                                                 setUnderlyingOpen(false)
                                                             }}>
-                                                                <Check className={cn("mr-2 h-4 w-4", config.underlying === u ? "opacity-100" : "opacity-0")} />
+                                                                <Check className={cn("mr-2 h-4 w-4", selectedUnderlying === u ? "opacity-100" : "opacity-0")} />
                                                                 {u}
                                                             </CommandItem>
                                                         ))}
@@ -653,7 +726,13 @@ export default function OptionSpikeMonitor() {
                             <div className="space-y-2">
                                 <Label>Expiry & Strikes</Label>
                                 <div className="flex gap-2">
-                                    <Select value={config.expiry} onValueChange={(v) => setConfig(p => ({ ...p, expiry: v }))}>
+                                    <Select
+                                        value={selectedExpiry}
+                                        onValueChange={(v) => {
+                                            setSelectedExpiry(v)
+                                            setConfig(p => ({ ...p, expiry: v }))
+                                        }}
+                                    >
                                         <SelectTrigger className="flex-1">
                                             <SelectValue placeholder="Expiry" />
                                         </SelectTrigger>
@@ -691,16 +770,6 @@ export default function OptionSpikeMonitor() {
                                             onChange={e => setConfig(p => ({ ...p, premiumThreshold: Number(e.target.value) }))}
                                         />
                                     </div>
-                                    <div className="col-span-2 flex items-center justify-between rounded-md border px-3 py-2">
-                                        <div>
-                                            <p className="text-xs font-medium">Skip IV if distance fails</p>
-                                            <p className="text-[11px] text-muted-foreground">Reduce IV calls for near strikes</p>
-                                        </div>
-                                        <Switch
-                                            checked={config.skipIvWhenDistanceFail}
-                                            onCheckedChange={(checked) => setConfig(p => ({ ...p, skipIvWhenDistanceFail: checked }))}
-                                        />
-                                    </div>
                                 </div>
                             </div>
 
@@ -716,15 +785,6 @@ export default function OptionSpikeMonitor() {
                                         />
                                     </div>
                                     <div className="space-y-1">
-                                        <span className="text-xs text-muted-foreground">IV Refresh (sec)</span>
-                                        <Input
-                                            type="number"
-                                            min={5}
-                                            value={config.ivRefreshSeconds}
-                                            onChange={e => setConfig(p => ({ ...p, ivRefreshSeconds: Number(e.target.value) }))}
-                                        />
-                                    </div>
-                                    <div className="space-y-1 col-span-2">
                                         <span className="text-xs text-muted-foreground">Spike %</span>
                                         <Input
                                             type="number"
@@ -738,7 +798,7 @@ export default function OptionSpikeMonitor() {
                             <div className="space-y-2 lg:col-span-4">
                                 <Label>Spike Reference</Label>
                                 <div className="flex gap-4 items-center">
-                                    <Select value={config.spikeReference} onValueChange={(v: any) => setConfig(p => ({ ...p, spikeReference: v }))}>
+                                    <Select value={config.spikeReference} onValueChange={(v) => setConfig(p => ({ ...p, spikeReference: v as MonitorConfig['spikeReference'] }))}>
                                         <SelectTrigger className="w-48">
                                             <SelectValue />
                                         </SelectTrigger>
@@ -784,6 +844,43 @@ export default function OptionSpikeMonitor() {
             {/* Main Content */}
             {isMonitoring && optionChain && (
                 <div className="space-y-4">
+                    {/* Control Panel */}
+                    <Card>
+                        <CardContent className="p-4">
+                            <div className="flex flex-wrap items-center gap-4">
+                                <Button
+                                    variant="outline"
+                                    onClick={() => fetchIvData()}
+                                    disabled={monitoredStrikes.length === 0 || isFetchingIv}
+                                >
+                                    <RefreshCw className={cn("mr-2 h-4 w-4", isFetchingIv && "animate-spin")} />
+                                    {isFetchingIv ? 'Fetching IV...' : 'Fetch IV'}
+                                </Button>
+                                
+                                <div className="flex items-center gap-2 px-3 py-2 rounded-md border">
+                                    <Switch
+                                        checked={config.skipIvWhenDistanceFail}
+                                        onCheckedChange={(checked) => setConfig(p => ({ ...p, skipIvWhenDistanceFail: checked }))}
+                                    />
+                                    <div>
+                                        <p className="text-xs font-medium">Skip IV if distance fails</p>
+                                        <p className="text-[10px] text-muted-foreground">Reduce IV calls for near strikes</p>
+                                    </div>
+                                </div>
+
+                                <div className="flex items-center gap-2 px-3 py-2 rounded-md border">
+                                    <Switch
+                                        checked={config.skipIvWhenPremiumFail}
+                                        onCheckedChange={(checked) => setConfig(p => ({ ...p, skipIvWhenPremiumFail: checked }))}
+                                    />
+                                    <div>
+                                        <p className="text-xs font-medium">Skip IV if premium fails</p>
+                                        <p className="text-[10px] text-muted-foreground">Skip IV for low premium strikes</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </CardContent>
+                    </Card>
 
                     {/* Status Cards */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -793,7 +890,7 @@ export default function OptionSpikeMonitor() {
                                     <p className="text-sm font-medium text-muted-foreground">Spot Price</p>
                                     <h2 className="text-2xl font-bold">
                                         {formatPrice(
-                                            wsData.get(`${config.exchange === 'NFO' ? 'NSE_INDEX' : 'BSE_INDEX'}:${config.underlying}`)?.data?.ltp
+                                            wsData.get(`${getUnderlyingExchange(config.exchange)}:${config.underlying}`)?.data?.ltp
                                             ?? optionChain.underlying_ltp
                                         )}
                                     </h2>
@@ -825,9 +922,14 @@ export default function OptionSpikeMonitor() {
                                     <p className="text-xs text-green-500">
                                         {tableRows.filter(r => r.isAllPass).length} Passing
                                     </p>
-                                    {hiddenDistanceCount > 0 && (
+                                    {hiddenCounts.distance > 0 && (
                                         <p className="text-xs text-amber-600">
-                                            {hiddenDistanceCount} Hidden (distance)
+                                            {hiddenCounts.distance} Hidden (distance)
+                                        </p>
+                                    )}
+                                    {hiddenCounts.premium > 0 && (
+                                        <p className="text-xs text-amber-600">
+                                            {hiddenCounts.premium} Hidden (premium)
                                         </p>
                                     )}
                                 </div>

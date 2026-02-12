@@ -57,6 +57,12 @@ const tools = [
     href: '/oiprofile',
     color: 'bg-orange-500',
   },
+  {
+    title: 'Option Spike Monitor',
+    description: 'Monitor OTM strikes with distance, premium, IV, and spike filters in real time',
+    href: '/option-spike-monitor',
+    color: 'bg-lime-500',
+  },
 ]
 
 export default function Tools() {

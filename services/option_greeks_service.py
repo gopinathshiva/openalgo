@@ -640,8 +640,6 @@ def get_multi_option_greeks(
     Returns:
         Tuple of (success, response_dict, status_code)
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
     # Early return for empty symbols list
     if not symbols:
         return (
@@ -805,26 +803,13 @@ def get_multi_option_greeks(
             502,
         )
 
-    # Use ThreadPoolExecutor for parallel execution
-    max_workers = min(len(symbols), 10)
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all tasks
-        future_to_symbol = {
-            executor.submit(fetch_single_greeks, sym, quote_lookup, default_spot_price): sym
-            for sym in symbols
-        }
-
-        # Collect results as they complete
-        for future in as_completed(future_to_symbol):
-            result = future.result()
-
-            if result["success"]:
-                success_count += 1
-                results.append(result["response"])
-            else:
-                failed_count += 1
-                results.append(result["response"])
+    for sym in symbols:
+        result = fetch_single_greeks(sym, quote_lookup, default_spot_price)
+        if result["success"]:
+            success_count += 1
+        else:
+            failed_count += 1
+        results.append(result["response"])
 
     # Sort results to maintain original order
     symbol_order = {sym["symbol"]: idx for idx, sym in enumerate(symbols)}
