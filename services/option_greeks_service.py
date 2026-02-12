@@ -654,21 +654,65 @@ def get_multi_option_greeks(
     success_count = 0
     failed_count = 0
 
-    def fetch_single_greeks(symbol_request):
-        """Fetch Greeks for a single symbol"""
+    def fetch_single_greeks(symbol_request, quote_lookup, default_spot_price):
+        """Fetch Greeks for a single symbol using pre-fetched quotes"""
         try:
             symbol = symbol_request.get("symbol")
             exchange = symbol_request.get("exchange")
             underlying_symbol = symbol_request.get("underlying_symbol")
             underlying_exchange = symbol_request.get("underlying_exchange")
 
-            success, response, status_code = get_option_greeks(
+            option_quote = quote_lookup.get((exchange, symbol))
+            if not option_quote:
+                return {
+                    "success": False,
+                    "response": {
+                        "status": "error",
+                        "symbol": symbol,
+                        "exchange": exchange,
+                        "message": "Option LTP not available",
+                    },
+                    "symbol": symbol,
+                    "exchange": exchange,
+                }
+
+            option_price = option_quote.get("ltp")
+            if not option_price:
+                return {
+                    "success": False,
+                    "response": {
+                        "status": "error",
+                        "symbol": symbol,
+                        "exchange": exchange,
+                        "message": "Option LTP not available",
+                    },
+                    "symbol": symbol,
+                    "exchange": exchange,
+                }
+
+            spot_price = default_spot_price
+            if underlying_symbol and underlying_exchange:
+                underlying_quote = quote_lookup.get((underlying_exchange, underlying_symbol))
+                if not underlying_quote or not underlying_quote.get("ltp"):
+                    return {
+                        "success": False,
+                        "response": {
+                            "status": "error",
+                            "symbol": symbol,
+                            "exchange": exchange,
+                            "message": "Underlying LTP not available",
+                        },
+                        "symbol": symbol,
+                        "exchange": exchange,
+                    }
+                spot_price = underlying_quote.get("ltp")
+
+            success, response, status_code = calculate_greeks(
                 option_symbol=symbol,
                 exchange=exchange,
+                spot_price=spot_price,
+                option_price=option_price,
                 interest_rate=interest_rate,
-                forward_price=None,  # Not supported in batch mode
-                underlying_symbol=underlying_symbol,
-                underlying_exchange=underlying_exchange,
                 expiry_time=expiry_time,
                 api_key=api_key,
             )
@@ -693,13 +737,83 @@ def get_multi_option_greeks(
                 "exchange": symbol_request.get("exchange"),
             }
 
+    from services.quotes_service import get_multiquotes
+
+    default_underlying_symbol = None
+    default_underlying_exchange = None
+    if symbols:
+        first_symbol = symbols[0].get("symbol")
+        first_exchange = symbols[0].get("exchange")
+        if first_symbol and first_exchange:
+            try:
+                base_symbol, _, _, _ = parse_option_symbol(first_symbol, first_exchange, expiry_time)
+                default_underlying_symbol = base_symbol
+                default_underlying_exchange = get_underlying_exchange(base_symbol, first_exchange)
+            except Exception as exc:
+                logger.warning(f"Failed to derive default underlying: {exc}")
+
+    quote_requests = []
+    for symbol_request in symbols:
+        symbol = symbol_request.get("symbol")
+        exchange = symbol_request.get("exchange")
+        if symbol and exchange:
+            quote_requests.append({"symbol": symbol, "exchange": exchange})
+
+    if default_underlying_symbol and default_underlying_exchange:
+        quote_requests.append(
+            {"symbol": default_underlying_symbol, "exchange": default_underlying_exchange}
+        )
+
+    for symbol_request in symbols:
+        underlying_symbol = symbol_request.get("underlying_symbol")
+        underlying_exchange = symbol_request.get("underlying_exchange")
+        if underlying_symbol and underlying_exchange:
+            quote_requests.append(
+                {"symbol": underlying_symbol, "exchange": underlying_exchange}
+            )
+
+    success_quotes, quotes_response, status_code = get_multiquotes(
+        symbols=quote_requests, api_key=api_key
+    )
+    if not success_quotes or "results" not in quotes_response:
+        return False, quotes_response, status_code
+
+    quote_lookup = {}
+    for result in quotes_response.get("results", []):
+        symbol = result.get("symbol")
+        exchange = result.get("exchange")
+        if not symbol or not exchange:
+            continue
+        if "data" in result:
+            quote_lookup[(exchange, symbol)] = result["data"]
+        elif "error" not in result:
+            quote_lookup[(exchange, symbol)] = result
+
+    default_spot_price = None
+    if default_underlying_symbol and default_underlying_exchange:
+        default_quote = quote_lookup.get((default_underlying_exchange, default_underlying_symbol))
+        if default_quote:
+            default_spot_price = default_quote.get("ltp")
+
+    if default_spot_price is None:
+        return (
+            False,
+            {
+                "status": "error",
+                "message": "Failed to fetch underlying price for batch",
+            },
+            502,
+        )
+
     # Use ThreadPoolExecutor for parallel execution
-    # Limit workers to avoid overwhelming the broker API
     max_workers = min(len(symbols), 10)
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submit all tasks
-        future_to_symbol = {executor.submit(fetch_single_greeks, sym): sym for sym in symbols}
+        future_to_symbol = {
+            executor.submit(fetch_single_greeks, sym, quote_lookup, default_spot_price): sym
+            for sym in symbols
+        }
 
         # Collect results as they complete
         for future in as_completed(future_to_symbol):
