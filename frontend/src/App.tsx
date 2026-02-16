@@ -61,6 +61,7 @@ const VolSurface = lazy(() => import('@/pages/VolSurface'))
 const GEXDashboard = lazy(() => import('@/pages/GEXDashboard'))
 const IVSmile = lazy(() => import('@/pages/IVSmile'))
 const OIProfile = lazy(() => import('@/pages/OIProfile'))
+const OptionSpikeMonitor = lazy(() => import('@/pages/OptionSpikeMonitor'))
 
 // Strategy pages
 const StrategyIndex = lazy(() => import('@/pages/strategy/StrategyIndex'))
@@ -162,6 +163,7 @@ function App() {
                 <Route path="/gex" element={<GEXDashboard />} />
                 <Route path="/ivsmile" element={<IVSmile />} />
                 <Route path="/oiprofile" element={<OIProfile />} />
+                <Route path="/option-spike-monitor" element={<OptionSpikeMonitor />} />
                 <Route path="/websocket/test" element={<WebSocketTest />} />
                 <Route path="/websocket/test/20" element={<WebSocketTest depthLevel={20} />} />
                 <Route path="/websocket/test/30" element={<WebSocketTest depthLevel={30} />} />
