@@ -542,7 +542,6 @@ export default function WebSocketTest({ depthLevel = 5 }: WebSocketTestProps) {
       setSearchResults((data.results || []).slice(0, 8))
       setShowSearchResults(true)
     } catch (err) {
-      console.debug('Symbol search failed:', err)
       setSearchResults([])
     } finally {
       setIsSearching(false)
@@ -638,7 +637,6 @@ export default function WebSocketTest({ depthLevel = 5 }: WebSocketTestProps) {
         })
         setActiveSymbols(newMap)
       } catch (err) {
-        console.debug('Failed to load saved symbols:', err)
       }
     }
   }, [])
