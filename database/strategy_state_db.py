@@ -8,10 +8,10 @@ This database stores Python strategy execution states and trade history.
 import os
 import json
 from datetime import datetime
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Float, Boolean
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Float, Boolean, text
 from sqlalchemy.orm import scoped_session, sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.pool import NullPool
+from sqlalchemy.pool import StaticPool
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -42,11 +42,15 @@ DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'db',
 DB_PATH = os.getenv('STRATEGY_STATE_DB_PATH', DEFAULT_DB_PATH)
 DATABASE_URL = f'sqlite:///{DB_PATH}'
 
-# Create engine with NullPool for SQLite
+# Create engine with StaticPool and proper timeout for SQLite
 engine = create_engine(
     DATABASE_URL,
-    poolclass=NullPool,
-    connect_args={'check_same_thread': False}
+    poolclass=StaticPool,  # CRITICAL: Reuse connections instead of creating new ones
+    connect_args={
+        'check_same_thread': False,
+        'timeout': 30  # CRITICAL: Increase timeout from 5s to 30s
+    },
+    echo=False
 )
 
 db_session = scoped_session(sessionmaker(autocommit=False, autoflush=False, bind=engine))
@@ -444,6 +448,15 @@ def init_db() -> None:
         db_dir = os.path.dirname(DB_PATH)
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir, exist_ok=True)
+
+        # CRITICAL FIX: Enable WAL mode for better concurrency
+        # This allows multiple readers while one writer is active
+        with engine.connect() as conn:
+            conn.execute(text("PRAGMA journal_mode=WAL"))
+            conn.execute(text("PRAGMA synchronous=NORMAL"))  # Balance between safety and performance
+            conn.execute(text("PRAGMA busy_timeout=30000"))  # 30 second timeout for locks
+            conn.commit()
+            logger.info("Strategy State DB: WAL mode enabled with 30s busy timeout")
 
         StrategyExecutionState.__table__.create(engine, checkfirst=True)
         StrategyOverride.__table__.create(engine, checkfirst=True)
