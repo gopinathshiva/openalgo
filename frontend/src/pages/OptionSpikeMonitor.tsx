@@ -161,17 +161,19 @@ export default function OptionSpikeMonitor() {
     // Derived list of symbols to monitor (for WS subscription)
     const [monitoredStrikes, setMonitoredStrikes] = useState<MonitoredStrike[]>([])
     const wsSymbols = useMemo(() => {
-        const symbols = monitoredStrikes.map(s => ({
+        const symbols: Array<{ symbol: string; exchange: string }> = monitoredStrikes.map(s => ({
             symbol: s.symbol,
             exchange: config.exchange
         }))
-        // Add underlying for spot price
-        symbols.push({
-            symbol: config.underlying,
-            exchange: config.exchange
-        })
+        // Add underlying for spot price (use index exchange, not derivatives exchange)
+        if (config.underlying) {
+            symbols.push({
+                symbol: config.underlying,
+                exchange: getUnderlyingExchange(config.exchange)
+            })
+        }
         return symbols
-    }, [monitoredStrikes, config.exchange, config.underlying])
+    }, [monitoredStrikes, config.exchange, config.underlying, getUnderlyingExchange])
 
     // WebSocket Hook
     const { data: wsData } = useMarketData({

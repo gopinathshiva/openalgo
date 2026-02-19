@@ -1344,6 +1344,9 @@ export default function StrategyPositions() {
   const { data: allOpenLegsWithLivePrice } = useLivePrice(allLegPriceItems, {
     enabled: allLegPriceItems.length > 0,
     useMultiQuotesFallback: true,
+    staleThreshold: 5000,
+    multiQuotesRefreshInterval: 30000,
+    pauseWhenHidden: true,
   })
 
   const liveLtpByInstanceAndLegKey = useMemo(() => {
