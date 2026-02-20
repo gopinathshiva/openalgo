@@ -147,6 +147,12 @@ export interface StrategyState {
   trade_history: TradeHistoryRecord[]
   orchestrator: OrchestratorState | null
   summary: StrategySummary
+  state_data?: {
+    underlying?: string
+    exchange?: string
+    [key: string]: any
+  }
+  is_state_data_malformed?: boolean
 }
 
 export interface StrategyStateResponse {

@@ -145,18 +145,18 @@ function formatDateTime(isoString: string | null | undefined): string {
 function formatTime(isoString: string | null | undefined): string {
   if (!isoString) return '—'
   const date = new Date(isoString)
-  
+
   // Get today's date in IST
   const nowIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
   const todayStart = new Date(nowIST.getFullYear(), nowIST.getMonth(), nowIST.getDate())
-  
+
   // Get the entry date in IST
   const entryIST = new Date(date.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }))
   const entryStart = new Date(entryIST.getFullYear(), entryIST.getMonth(), entryIST.getDate())
-  
+
   // Check if it's today
   const isToday = todayStart.getTime() === entryStart.getTime()
-  
+
   if (isToday) {
     // Today: show time only
     return date.toLocaleTimeString('en-IN', {
@@ -1152,7 +1152,7 @@ export default function StrategyPositions() {
     setExitStatus('SL_HIT')
     setExitAtMarket(false)
   }
-  
+
   const handleExitAtMarketChange = (checked: boolean) => {
     setExitAtMarket(checked)
     // Reset exit status when switching modes
@@ -1173,7 +1173,7 @@ export default function StrategyPositions() {
         toast.error('Please enter a valid exit price')
         return
       }
-      
+
       if (!exitStatus) {
         toast.error('Please select an exit status')
         return
@@ -1214,7 +1214,7 @@ export default function StrategyPositions() {
       setExitDialog({ open: false, instanceId: '', legKey: '', leg: null })
       setExitPrice('')
       setExitAtMarket(false)
-      
+
       // Refresh data immediately after successful exit
       await fetchData(false)
     } catch (error) {
@@ -1300,13 +1300,28 @@ export default function StrategyPositions() {
     exchange: string
     // Baseline LTP for initial render (matches /positions behavior)
     ltp?: number
+    // Required for useLivePrice to enable live updates
+    quantity?: number
+    average_price?: number
   }
 
   const allLegPriceItems: StrategyLegPriceItem[] = useMemo(() => {
     const items: StrategyLegPriceItem[] = []
 
     for (const strategy of strategies) {
-      const optionExchange = strategy.config?.exchange || 'NFO'
+      // Determine exchange from config or infer from underlying
+      let optionExchange = strategy.config?.exchange || 'NFO'
+
+      // Infer exchange from underlying if not explicitly set
+      if (!strategy.config?.exchange && strategy.state_data) {
+        const underlying = strategy.state_data.underlying || strategy.config?.underlying
+        if (underlying === 'SENSEX' || underlying === 'BANKEX' || underlying === 'SENSEX50') {
+          optionExchange = 'BFO'
+        } else if (underlying === 'NIFTY' || underlying === 'BANKNIFTY' || underlying === 'FINNIFTY' || underlying === 'MIDCPNIFTY') {
+          optionExchange = 'NFO'
+        }
+      }
+
       const legs = strategy.legs || {}
 
       for (const [legKey, leg] of Object.entries(legs)) {
@@ -1325,6 +1340,8 @@ export default function StrategyPositions() {
             symbol,
             exchange: exchange || optionExchange,
             ltp: (leg as any).current_ltp ?? (leg as any).entry_price,
+            quantity: leg.quantity,
+            average_price: leg.entry_price ?? undefined,
           })
         } else {
           items.push({
@@ -1333,6 +1350,8 @@ export default function StrategyPositions() {
             symbol: raw,
             exchange: optionExchange,
             ltp: (leg as any).current_ltp ?? (leg as any).entry_price,
+            quantity: leg.quantity,
+            average_price: leg.entry_price ?? undefined,
           })
         }
       }
@@ -1946,7 +1965,7 @@ export default function StrategyPositions() {
                 </p>
               )}
             </div>
-            
+
             <div className="space-y-2">
               <Label htmlFor="exit-price">Exit Price {!exitAtMarket && '*'}</Label>
               <Input
@@ -1969,7 +1988,7 @@ export default function StrategyPositions() {
                 </p>
               )}
             </div>
-            
+
             {!exitAtMarket && (
               <div className="space-y-2">
                 <Label htmlFor="exit-status">Exit Status *</Label>
@@ -1987,7 +2006,7 @@ export default function StrategyPositions() {
                 </p>
               </div>
             )}
-            
+
             {exitAtMarket && (
               <div className="space-y-2">
                 <p className="text-sm text-muted-foreground">
