@@ -144,7 +144,7 @@ export interface OrchestratorState {
   last_updated: string
 }
 
-export type StrategyStatus = 'RUNNING' | 'PAUSED' | 'COMPLETED' | 'ERROR'
+export type StrategyStatus = 'RUNNING' | 'PAUSED' | 'COMPLETED' | 'ERROR' | 'STOPPED'
 
 export interface StrategySummary {
   total_realized_pnl: number

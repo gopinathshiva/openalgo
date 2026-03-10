@@ -82,8 +82,8 @@ const HEALTH_STALE_SECONDS = 30   // heartbeat older than 30s → stale
 const HEALTH_DEAD_SECONDS  = 60   // heartbeat older than 60s → dead/crashed
 
 function getStrategyHealth(strategy: StrategyState): StrategyHealth {
-  // Completed strategies are neither alive nor dead — not applicable
-  if (strategy.status === 'COMPLETED') return 'unknown'
+  // Completed or stopped strategies are neither alive nor dead — not applicable
+  if (strategy.status === 'COMPLETED' || strategy.status === 'STOPPED') return 'unknown'
   if (!strategy.last_heartbeat) return 'unknown'
 
   const lastBeat = new Date(strategy.last_heartbeat).getTime()
@@ -1465,6 +1465,12 @@ export default function StrategyPositions() {
         const newHealth = getStrategyHealth(strategy)
         const oldHealth = prevMap.get(strategy.instance_id)
         const name = strategy.strategy_name
+
+        // Skip heartbeat toasts for COMPLETED or STOPPED strategies
+        if (strategy.status === 'COMPLETED' || strategy.status === 'STOPPED') {
+          prevMap.set(strategy.instance_id, newHealth)
+          continue
+        }
 
         if (oldHealth !== undefined && oldHealth !== newHealth) {
           if (newHealth === 'dead') {
