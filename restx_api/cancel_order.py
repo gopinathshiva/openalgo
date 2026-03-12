@@ -44,9 +44,11 @@ class CancelOrder(Resource):
             # Extract API key and order ID
             api_key = order_data.pop("apikey", None)
             orderid = order_data.get("orderid")
+            is_amo = order_data.get("is_amo", False)
+            variety = "amo" if is_amo else "regular"
 
             # Call the service function to cancel the order
-            success, response_data, status_code = cancel_order(orderid=orderid, api_key=api_key)
+            success, response_data, status_code = cancel_order(orderid=orderid, api_key=api_key, variety=variety)
 
             return make_response(jsonify(response_data), status_code)
 

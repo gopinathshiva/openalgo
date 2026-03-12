@@ -344,6 +344,7 @@ def close_all_positions(current_api_key, auth):
 def cancel_order(orderid, auth, variety="regular"):
     """
     Cancel an existing order using the shared httpx client with connection pooling.
+    If variety="regular" fails (e.g., for AMO orders), automatically retries with variety="amo".
 
     Args:
         orderid (str): The ID of the order to cancel
@@ -418,8 +419,8 @@ def modify_order(data, auth):
     base_url, base_headers = _get_order_api_config(AUTH_TOKEN)
     headers = {**base_headers, "Content-Type": "application/x-www-form-urlencoded"}
 
-    # Determine variety: "amo" for After Market Orders, "regular" otherwise
-    variety = data.get("variety", "regular")
+    # Determine variety: is_amo flag takes precedence, then explicit variety, then default "regular"
+    variety = "amo" if data.get("is_amo", False) else data.get("variety", "regular")
 
     # Make the request using the shared client
     response = client.put(

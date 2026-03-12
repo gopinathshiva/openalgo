@@ -16,7 +16,7 @@ def transform_data(data):
         "exchange": data["exchange"],
         "transaction_type": data["action"].upper(),
         "order_type": data["pricetype"],
-        "quantity": data["quantity"],
+        "quantity": int(data["quantity"]),
         "product": data["product"],
         "price": data.get("price", "0"),
         "trigger_price": data.get("trigger_price", "0"),
@@ -36,7 +36,7 @@ def transform_data(data):
 def transform_modify_order_data(data):
     return {
         "order_type": map_order_type(data["pricetype"]),
-        "quantity": data["quantity"],
+        "quantity": int(data["quantity"]),
         "price": data["price"],
         "trigger_price": data.get("trigger_price", "0"),
         "disclosed_quantity": data.get("disclosed_quantity", "0"),

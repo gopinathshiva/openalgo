@@ -18,5 +18,7 @@ __pycache__/
 *.pyo
 *.pyd
 
+sounds
+
 # Keep the directory but ignore contents
 # This ensures the scripts folder exists in git but user strategies are not tracked

@@ -86,12 +86,14 @@ class ModifyOrderSchema(Schema):
         required=True,
         validate=validate.Range(min=0, error="Trigger price must be a non-negative number."),
     )
+    is_amo = fields.Bool(missing=False)  # Optional: True for After Market Orders (AMO)
 
 
 class CancelOrderSchema(Schema):
     apikey = fields.Str(required=True, validate=validate.Length(min=1, max=256))
     strategy = fields.Str(required=True)
     orderid = fields.Str(required=True)
+    is_amo = fields.Bool(missing=False)  # Optional: True for After Market Orders (AMO)
 
 
 class ClosePositionSchema(Schema):

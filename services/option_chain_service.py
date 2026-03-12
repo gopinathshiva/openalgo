@@ -45,10 +45,17 @@ Strike Labels (different for CE and PE):
     - Strike ABOVE ATM: CE is OTM, PE is ITM
 """
 
+import os
+import threading
 from typing import Any, Dict, List, Optional, Tuple
 
-from database.auth_db import get_auth_token_broker
+from database.auth_db import get_auth_token_broker, verify_api_key
 from database.symbol import SymToken, db_session
+from database.token_db_enhanced import fno_search_symbols
+from services.market_data_service import (
+    get_ltp_value as get_ws_ltp_value,
+    is_data_fresh as ws_is_data_fresh,
+)
 from services.option_symbol_service import (
     construct_option_symbol,
     find_atm_strike_from_actual,
@@ -56,12 +63,43 @@ from services.option_symbol_service import (
     get_option_exchange,
     parse_underlying_symbol,
 )
-from database.token_db_enhanced import fno_search_symbols
 from services.quotes_service import get_multiquotes, get_quotes, import_broker_module
+from services.websocket_service import subscribe_to_symbols as ws_subscribe_to_symbols
 from utils.constants import CRYPTO_EXCHANGES, INSTRUMENT_PERPFUT
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+def _subscribe_symbols_background(symbols: list[dict[str, str]], api_key: str) -> None:
+    """Fire-and-forget WebSocket subscription so the next call hits the cache.
+
+    Only active when ZERODHA_ENCTOKEN is set. Resolves the OpenAlgo username
+    from the api_key and subscribes in a daemon thread (never blocks the caller).
+    """
+    if not os.getenv("ZERODHA_ENCTOKEN") or not symbols or not api_key:
+        return
+
+    def _task() -> None:
+        try:
+            username = verify_api_key(api_key)
+            if not username:
+                logger.warning("[WS Subscribe] Could not resolve OpenAlgo username from api_key")
+                return
+            logger.info(
+                f"[WS Subscribe] Subscribing {len(symbols)} symbol(s) as '{username}': "
+                + ", ".join(f"{s['symbol']}/{s['exchange']}" for s in symbols[:5])
+                + ("..." if len(symbols) > 5 else "")
+            )
+            success, response, _ = ws_subscribe_to_symbols(username, "zerodha", symbols, "Quote")
+            if not success:
+                logger.warning(f"[WS Subscribe] Failed: {response.get('message')}")
+            else:
+                logger.info(f"[WS Subscribe] Subscribed {len(symbols)} symbol(s) successfully")
+        except Exception as exc:
+            logger.warning(f"[WS Subscribe] Background subscription error: {exc}")
+
+    threading.Thread(target=_task, daemon=True).start()
 
 
 def get_strikes_with_labels(
@@ -240,6 +278,9 @@ def get_option_chain(
         if not final_expiry:
             return False, {"status": "error", "message": "Expiry date is required."}, 400
 
+        # Compute once: use WebSocket LTP cache only when running in enctoken mode.
+        _use_ws_cache = bool(os.getenv("ZERODHA_ENCTOKEN"))
+
         # Step 2: Determine quote exchange for underlying LTP
         quote_exchange = exchange
         if exchange.upper() in ["NFO", "BFO"]:
@@ -299,9 +340,31 @@ def get_option_chain(
                     500,
                 )
         else:
-            success, quote_response, status_code = get_quotes(
-                symbol=quote_symbol, exchange=quote_exchange, api_key=api_key
-            )
+            # When ZERODHA_ENCTOKEN is active, try the WebSocket LTP cache first
+            # to avoid the per-call 350ms rate-limit delay.
+            _used_ws_cache = False
+            if _use_ws_cache:
+                _cached_ltp = get_ws_ltp_value(quote_symbol, quote_exchange)
+                _fresh = ws_is_data_fresh(quote_symbol, quote_exchange, max_age_seconds=30)
+                logger.debug(
+                    f"[WS Cache] Underlying {quote_symbol}/{quote_exchange} — "
+                    f"cached_ltp={_cached_ltp}, is_fresh={_fresh}"
+                )
+                if _cached_ltp and _cached_ltp > 0 and _fresh:
+                    logger.info(f"[WS Cache] Underlying LTP for {quote_symbol}: {_cached_ltp} (skipping HTTP)")
+                    quote_response = {"data": {"ltp": float(_cached_ltp)}}
+                    success = True
+                    status_code = 200
+                    _used_ws_cache = True
+
+            if not _used_ws_cache:
+                success, quote_response, status_code = get_quotes(
+                    symbol=quote_symbol, exchange=quote_exchange, api_key=api_key
+                )
+                if success:
+                    _subscribe_symbols_background(
+                        [{"symbol": quote_symbol, "exchange": quote_exchange}], api_key
+                    )
 
         if not success:
             return (
@@ -406,9 +469,55 @@ def get_option_chain(
                     500,
                 )
         else:
-            success, quotes_response, status_code = get_multiquotes(
-                symbols=symbols_to_fetch, api_key=api_key
-            )
+            # When ZERODHA_ENCTOKEN is active, serve LTPs from the WebSocket cache
+            # where possible; only fall back to HTTP (with 350ms/call rate-limit) for
+            # symbols that aren't in the cache yet.
+            if _use_ws_cache:
+                _cached_results = []
+                _uncached_symbols = []
+                for _sym in symbols_to_fetch:
+                    _ltp = get_ws_ltp_value(_sym["symbol"], _sym["exchange"])
+                    _fresh = ws_is_data_fresh(_sym["symbol"], _sym["exchange"], max_age_seconds=30)
+                    logger.debug(
+                        f"[WS Cache] {_sym['symbol']}/{_sym['exchange']} — "
+                        f"cached_ltp={_ltp}, is_fresh={_fresh}"
+                    )
+                    if _ltp and _ltp > 0 and _fresh:
+                        _cached_results.append(
+                            {
+                                "symbol": _sym["symbol"],
+                                "exchange": _sym["exchange"],
+                                "data": {"ltp": float(_ltp)},
+                            }
+                        )
+                    else:
+                        _uncached_symbols.append(_sym)
+
+                logger.info(
+                    f"[WS Cache] {len(_cached_results)}/{len(symbols_to_fetch)} option LTPs "
+                    f"from cache, {len(_uncached_symbols)} via HTTP"
+                )
+
+                if _uncached_symbols:
+                    success, quotes_response, status_code = get_multiquotes(
+                        symbols=_uncached_symbols, api_key=api_key
+                    )
+                    if success and "results" in quotes_response:
+                        quotes_response["results"].extend(_cached_results)
+                        _subscribe_symbols_background(_uncached_symbols, api_key)
+                    else:
+                        # HTTP fetch failed — serve whatever we have from cache
+                        quotes_response = {"status": "success", "results": _cached_results}
+                        success = True
+                        status_code = 200
+                else:
+                    quotes_response = {"status": "success", "results": _cached_results}
+                    success = True
+                    status_code = 200
+            else:
+                success, quotes_response, status_code = get_multiquotes(
+                    symbols=symbols_to_fetch, api_key=api_key
+                )
 
         # Build quote lookup map
         quotes_map = {}
