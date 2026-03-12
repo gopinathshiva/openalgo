@@ -1220,23 +1220,19 @@ def get_strategy_log_files(strategy_id: str) -> list:
         except Exception as e:
             logger.warning(f"Error collecting log files for pattern '{pattern}' in '{directory}': {e}")
 
-    # --- LOGS_DIR: full strategy_id patterns ---
-    _collect(LOGS_DIR, f"{strategy_id}.log")
-    _collect(LOGS_DIR, f"{strategy_id}_*.log")
-
-    # --- LOGS_DIR: base-name patterns (omits creation-timestamp) ---
-    if base_name != strategy_id:
-        _collect(LOGS_DIR, f"{base_name}.log")
-        _collect(LOGS_DIR, f"{base_name}_*.log")
-
-    # --- CWD: user-created log files written with relative paths ---
+    # --- Collect log files from LOGS_DIR and CWD ---
+    search_dirs = [LOGS_DIR]
     cwd = Path.cwd()
     if cwd.resolve() != LOGS_DIR.resolve():
-        _collect(cwd, f"{strategy_id}.log")
-        _collect(cwd, f"{strategy_id}_*.log")
-        if base_name != strategy_id:
-            _collect(cwd, f"{base_name}.log")
-            _collect(cwd, f"{base_name}_*.log")
+        search_dirs.append(cwd)
+
+    patterns = [f"{strategy_id}.log", f"{strategy_id}_*.log"]
+    if base_name != strategy_id:
+        patterns.extend([f"{base_name}.log", f"{base_name}_*.log"])
+
+    for directory in search_dirs:
+        for pattern in patterns:
+            _collect(directory, pattern)
 
     return sorted(files, key=lambda f: f.stat().st_mtime)
 
