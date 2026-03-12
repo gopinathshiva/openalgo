@@ -1217,8 +1217,8 @@ def get_strategy_log_files(strategy_id: str) -> list:
                 if path not in seen:
                     seen.add(path)
                     files.append(path)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Error collecting log files for pattern '{pattern}' in '{directory}': {e}")
 
     # --- LOGS_DIR: full strategy_id patterns ---
     _collect(LOGS_DIR, f"{strategy_id}.log")
