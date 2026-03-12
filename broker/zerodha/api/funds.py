@@ -99,14 +99,14 @@ def get_margin_data(auth_token):
                         # enctoken mode: use OMS API via BrokerData
                         # Convert broker symbols → OpenAlgo symbols required by _get_multiquotes_enctoken
                         symbols_for_quote = []
-                        br_key_to_oa = {}  # "EXCHANGE:BRSYMBOL" → {"symbol": oa_sym, "exchange": exchange}
+                        oa_to_br_key = {}  # "EXCHANGE:OASYMBOL" → "EXCHANGE:BRSYMBOL"
                         for p in open_positions:
                             br_sym = p["tradingsymbol"]
                             exchange = p["exchange"]
                             oa_sym = get_oa_symbol(br_sym, exchange)
                             if oa_sym:
                                 symbols_for_quote.append({"symbol": oa_sym, "exchange": exchange})
-                                br_key_to_oa[f"{exchange}:{br_sym}"] = {"symbol": oa_sym, "exchange": exchange}
+                                oa_to_br_key[f"{exchange}:{oa_sym}"] = f"{exchange}:{br_sym}"
                             else:
                                 logger.warning(f"Could not resolve OA symbol for {exchange}:{br_sym}, will use last_price")
 
@@ -115,16 +115,13 @@ def get_margin_data(auth_token):
                                 results = broker_data._get_multiquotes_enctoken(
                                     symbols_for_quote, enctoken, user_id
                                 )
-                                # Build ltp_map keyed by "EXCHANGE:BRSYMBOL" to match position keys
-                                oa_ltp = {
-                                    f"{r['exchange']}:{r['symbol']}": r["data"].get("ltp", 0)
-                                    for r in results
-                                    if "data" in r
-                                }
-                                for br_key, oa_info in br_key_to_oa.items():
-                                    oa_key = f"{oa_info['exchange']}:{oa_info['symbol']}"
-                                    if oa_key in oa_ltp:
-                                        ltp_map[br_key] = oa_ltp[oa_key]
+                                # Build ltp_map directly from results using the reverse mapping
+                                for r in results:
+                                    if "data" in r:
+                                        oa_key = f"{r['exchange']}:{r['symbol']}"
+                                        if oa_key in oa_to_br_key:
+                                            br_key = oa_to_br_key[oa_key]
+                                            ltp_map[br_key] = r["data"].get("ltp", 0)
                             except Exception as e:
                                 logger.warning(
                                     f"enctoken LTP fetch failed: {e}. Falling back to position last_price."
