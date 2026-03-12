@@ -2350,7 +2350,8 @@ def api_get_log_content(strategy_id, log_name):
             if str(resolved).startswith(str(dir_resolved)) and candidate.exists():
                 log_path = candidate
                 break
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Error resolving log path candidate '{candidate}': {e}")
             continue
 
     if log_path is None:
