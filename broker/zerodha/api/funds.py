@@ -2,6 +2,8 @@
 
 import os
 
+from broker.zerodha.api.data import BrokerData
+from database.token_db import get_oa_symbol
 from utils.httpx_client import get_httpx_client
 from utils.logging import get_logger
 
@@ -84,21 +86,63 @@ def get_margin_data(auth_token):
                     else:
                         open_positions.append(p)
 
-                # Fetch live LTP for open positions via quotes API
+                # Fetch live LTP for open positions.
+                # Routing mirrors data.py get_quotes():
+                #   1. enctoken mode → OMS API via BrokerData (avoids 403 on api.kite.trade)
+                #   2. OAuth mode    → api.kite.trade/quote/ltp (existing behaviour)
                 if open_positions:
-                    instruments = [
-                        f"{p['exchange']}:{p['tradingsymbol']}" for p in open_positions
-                    ]
-                    query = "&".join(f"i={inst}" for inst in instruments)
-                    quote_response = client.get(
-                        f"https://api.kite.trade/quote/ltp?{query}", headers=headers
-                    )
-                    quote_response.raise_for_status()
-                    quote_data = quote_response.json()
                     ltp_map = {}
-                    if quote_data.get("status") == "success" and quote_data.get("data"):
-                        for key, val in quote_data["data"].items():
-                            ltp_map[key] = val.get("last_price", 0)
+                    broker_data = BrokerData(auth_token)
+                    enctoken, user_id = broker_data._get_enctoken_mode()
+
+                    if enctoken:
+                        # enctoken mode: use OMS API via BrokerData
+                        # Convert broker symbols → OpenAlgo symbols required by _get_multiquotes_enctoken
+                        symbols_for_quote = []
+                        br_key_to_oa = {}  # "EXCHANGE:BRSYMBOL" → {"symbol": oa_sym, "exchange": exchange}
+                        for p in open_positions:
+                            br_sym = p["tradingsymbol"]
+                            exchange = p["exchange"]
+                            oa_sym = get_oa_symbol(br_sym, exchange)
+                            if oa_sym:
+                                symbols_for_quote.append({"symbol": oa_sym, "exchange": exchange})
+                                br_key_to_oa[f"{exchange}:{br_sym}"] = {"symbol": oa_sym, "exchange": exchange}
+                            else:
+                                logger.warning(f"Could not resolve OA symbol for {exchange}:{br_sym}, will use last_price")
+
+                        if symbols_for_quote:
+                            try:
+                                results = broker_data._get_multiquotes_enctoken(
+                                    symbols_for_quote, enctoken, user_id
+                                )
+                                # Build ltp_map keyed by "EXCHANGE:BRSYMBOL" to match position keys
+                                oa_ltp = {
+                                    f"{r['exchange']}:{r['symbol']}": r["data"].get("ltp", 0)
+                                    for r in results
+                                    if "data" in r
+                                }
+                                for br_key, oa_info in br_key_to_oa.items():
+                                    oa_key = f"{oa_info['exchange']}:{oa_info['symbol']}"
+                                    if oa_key in oa_ltp:
+                                        ltp_map[br_key] = oa_ltp[oa_key]
+                            except Exception as e:
+                                logger.warning(
+                                    f"enctoken LTP fetch failed: {e}. Falling back to position last_price."
+                                )
+                    else:
+                        # OAuth mode: use Kite Connect API directly
+                        instruments = [
+                            f"{p['exchange']}:{p['tradingsymbol']}" for p in open_positions
+                        ]
+                        query = "&".join(f"i={inst}" for inst in instruments)
+                        quote_response = client.get(
+                            f"https://api.kite.trade/quote/ltp?{query}", headers=headers
+                        )
+                        quote_response.raise_for_status()
+                        quote_data = quote_response.json()
+                        if quote_data.get("status") == "success" and quote_data.get("data"):
+                            for key, val in quote_data["data"].items():
+                                ltp_map[key] = val.get("last_price", 0)
 
                     for p in open_positions:
                         qty = p.get("quantity", 0)
