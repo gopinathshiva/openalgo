@@ -11,6 +11,7 @@ import logging
 import os
 import platform
 import queue
+import re
 import signal
 import subprocess
 import sys
@@ -1182,6 +1183,60 @@ def market_hours_enforcer():
         logger.exception(f"Error in trading day enforcer: {e}")
 
 
+def get_strategy_log_files(strategy_id: str) -> list:
+    """
+    Return all log files that belong to a strategy, sorted by modification
+    time (oldest first).
+
+    Searches two locations:
+    1. ``LOGS_DIR`` – for OpenAlgo-managed IST logs and any log files the
+       strategy writes directly to LOGS_DIR.  Matches both the full
+       ``{strategy_id}`` key (with creation-timestamp suffix) and the
+       base name stripped of that suffix, so files created without the
+       creation-timestamp component are also found.
+    2. ``Path.cwd()`` – for log files the strategy creates using *relative*
+       paths (they land in the Flask app's working directory).  Same two
+       name patterns are tried here.
+
+    Using both globs (``{id}.log`` and ``{id}_*.log``) ensures a file named
+    exactly ``{strategy_id}.log`` is never silently dropped.
+    """
+    # Extract base name: strategy_id format is {name}_{YYYYMMDDHHMMSS}
+    # Strip the trailing 14-digit creation timestamp so that user files
+    # named {base_name}_<run_ts>.log are discovered even when they omit
+    # the creation timestamp component.
+    match = re.match(r'^(.+)_\d{14}$', strategy_id)
+    base_name = match.group(1) if match else strategy_id
+
+    seen: set = set()
+    files: list = []
+
+    def _collect(directory: Path, pattern: str) -> None:
+        try:
+            for path in directory.glob(pattern):
+                if path not in seen:
+                    seen.add(path)
+                    files.append(path)
+        except Exception as e:
+            logger.warning(f"Error collecting log files for pattern '{pattern}' in '{directory}': {e}")
+
+    # --- Collect log files from LOGS_DIR and CWD ---
+    search_dirs = [LOGS_DIR]
+    cwd = Path.cwd()
+    if cwd.resolve() != LOGS_DIR.resolve():
+        search_dirs.append(cwd)
+
+    patterns = [f"{strategy_id}.log", f"{strategy_id}_*.log"]
+    if base_name != strategy_id:
+        patterns.extend([f"{base_name}.log", f"{base_name}_*.log"])
+
+    for directory in search_dirs:
+        for pattern in patterns:
+            _collect(directory, pattern)
+
+    return sorted(files, key=lambda f: f.stat().st_mtime)
+
+
 def cleanup_strategy_logs(strategy_id: str):
     """
     Cleanup log files for a strategy based on configured limits.
@@ -1199,7 +1254,7 @@ def cleanup_strategy_logs(strategy_id: str):
         retention_days = int(os.getenv("STRATEGY_LOG_RETENTION_DAYS", "7"))
 
         # Find all log files for this strategy, sorted by modification time (oldest first)
-        log_files = sorted(LOGS_DIR.glob(f"{strategy_id}_*.log"), key=lambda f: f.stat().st_mtime)
+        log_files = get_strategy_log_files(strategy_id)
 
         if not log_files:
             return
@@ -1791,7 +1846,7 @@ def view_logs(strategy_id):
 
     # Get all log files for this strategy
     try:
-        for log_file in LOGS_DIR.glob(f"{strategy_id}_*.log"):
+        for log_file in get_strategy_log_files(strategy_id):
             log_files.append(
                 {
                     "name": log_file.name,
@@ -1851,7 +1906,7 @@ def clear_logs(strategy_id):
         total_size = 0
 
         # Find all log files for this strategy
-        log_files = list(LOGS_DIR.glob(f"{strategy_id}_*.log"))
+        log_files = get_strategy_log_files(strategy_id)
 
         if not log_files:
             return jsonify({"status": "error", "message": "No log files found to clear"}), 404
@@ -2229,12 +2284,11 @@ def api_get_log_files(strategy_id):
     if strategy_id not in STRATEGY_CONFIGS:
         return jsonify({"status": "error", "message": "Strategy not found"}), 404
 
-    # Logs are stored flat in LOGS_DIR with pattern: {strategy_id}_*.log
+    # Logs are stored flat in LOGS_DIR; collect both bare ({strategy_id}.log)
+    # and suffixed ({strategy_id}_*.log) files so all user-created log files appear.
     logs = []
     try:
-        for log_file in sorted(
-            LOGS_DIR.glob(f"{strategy_id}_*.log"), key=lambda x: x.stat().st_mtime, reverse=True
-        ):
+        for log_file in reversed(get_strategy_log_files(strategy_id)):
             stats = log_file.stat()
             logs.append(
                 {
@@ -2264,27 +2318,43 @@ def api_get_log_content(strategy_id, log_name):
     if not log_name or ".." in log_name or "/" in log_name or "\\" in log_name:
         return jsonify({"status": "error", "message": "Invalid log file name"}), 400
 
-    # Verify the log file belongs to this strategy (must start with strategy_id)
-    if not log_name.startswith(f"{strategy_id}_"):
+    # Derive base name (strategy_id without the 14-digit creation-timestamp suffix)
+    _match = re.match(r'^(.+)_\d{14}$', strategy_id)
+    base_name = _match.group(1) if _match else strategy_id
+
+    # Verify the log file belongs to this strategy.
+    # Accept files whose name starts with the full strategy_id OR the base name
+    # so that user-created files (e.g. {base_name}_{run_ts}_minimal.log) are served.
+    valid_prefix = log_name.startswith(f"{strategy_id}_") or \
+                   log_name == f"{strategy_id}.log" or \
+                   log_name.startswith(f"{base_name}_") or \
+                   log_name == f"{base_name}.log"
+    if not valid_prefix:
         return jsonify(
             {"status": "error", "message": "Log file does not belong to this strategy"}
         ), 403
 
-    # Logs are stored flat in LOGS_DIR (not in subdirectories)
-    log_path = LOGS_DIR / log_name
+    # Search for the log file in LOGS_DIR first, then CWD.
+    # Only paths within an allowed directory are accepted (no traversal).
+    allowed_dirs = [LOGS_DIR]
+    cwd = Path.cwd()
+    if cwd.resolve() != LOGS_DIR.resolve():
+        allowed_dirs.append(cwd)
 
-    # Ensure the resolved path is still within LOGS_DIR (defense in depth)
-    try:
-        resolved_path = log_path.resolve()
-        logs_dir_resolved = LOGS_DIR.resolve()
-        if not str(resolved_path).startswith(str(logs_dir_resolved)):
-            logger.warning(f"Path traversal attempt detected: {log_name}")
-            return jsonify({"status": "error", "message": "Invalid log file path"}), 403
-    except Exception as e:
-        logger.exception(f"Error resolving log path: {e}")
-        return jsonify({"status": "error", "message": "Invalid log file path"}), 400
+    log_path = None
+    for directory in allowed_dirs:
+        candidate = directory / log_name
+        try:
+            resolved = candidate.resolve()
+            dir_resolved = directory.resolve()
+            if str(resolved).startswith(str(dir_resolved)) and candidate.exists():
+                log_path = candidate
+                break
+        except Exception as e:
+            logger.warning(f"Error resolving log path candidate '{candidate}': {e}")
+            continue
 
-    if not log_path.exists():
+    if log_path is None:
         return jsonify({"status": "error", "message": "Log file not found"}), 404
 
     try:
