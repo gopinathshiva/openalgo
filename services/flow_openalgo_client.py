@@ -347,9 +347,19 @@ class FlowOpenAlgoClient:
     # --- Options Operations ---
 
     def optionchain(
-        self, underlying: str, exchange: str, expiry_date: str = "", strike_count: int = 10
+        self,
+        underlying: str,
+        exchange: str,
+        expiry_date: str = "",
+        strike_count: int = 10,
+        side: str | None = None,
     ) -> dict[str, Any]:
-        """Get option chain data"""
+        """Get option chain data.
+
+        Args:
+            side: Optional filter — "otm" returns ATM + OTM strikes only,
+                  "itm" returns ATM + ITM strikes only, None returns all (default).
+        """
         from services.option_chain_service import get_option_chain
 
         success, response, status_code = get_option_chain(
@@ -358,6 +368,7 @@ class FlowOpenAlgoClient:
             expiry_date=expiry_date,
             strike_count=strike_count,
             api_key=self.api_key,
+            side=side,
         )
         return self._handle_response(success, response, status_code)
 

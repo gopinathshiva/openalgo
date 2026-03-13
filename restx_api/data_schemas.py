@@ -219,6 +219,9 @@ class OptionChainSchema(Schema):
     strike_count = fields.Int(
         required=False, validate=validate.Range(min=1, max=100), allow_none=True
     )  # Number of strikes above/below ATM. If not provided, returns entire chain
+    side = fields.Str(
+        required=False, validate=validate.OneOf(["otm", "itm"]), allow_none=True, load_default=None
+    )  # Optional side filter: "otm" = ATM + OTM only, "itm" = ATM + ITM only
 
 
 class MarketHolidaysSchema(Schema):
