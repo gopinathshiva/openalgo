@@ -1,6 +1,22 @@
-from marshmallow import Schema, fields, validate
+from marshmallow import Schema, ValidationError, fields, post_load, validate
 
-from utils.constants import VALID_EXCHANGES
+from utils.constants import CRYPTO_EXCHANGES, VALID_EXCHANGES
+
+
+def _coerce_quantity_to_int(data):
+    """Convert quantity from float to int for non-crypto exchanges.
+
+    Raises ValidationError if a fractional quantity (e.g. 1.9) is sent
+    to a non-crypto exchange, since brokers like Zerodha only accept integers.
+    """
+    if data.get("exchange") not in CRYPTO_EXCHANGES and "quantity" in data:
+        qty = data["quantity"]
+        if qty != int(qty):
+            raise ValidationError(
+                {"quantity": [f"Fractional quantity ({qty}) is not allowed for non-crypto exchanges."]}
+            )
+        data["quantity"] = int(qty)
+    return data
 
 
 class OrderSchema(Schema):
@@ -32,6 +48,10 @@ class OrderSchema(Schema):
     )  # Optional: passed from options order for execution reference
     is_amo = fields.Bool(missing=False)  # Optional: True for After Market Orders (AMO)
 
+    @post_load
+    def coerce_quantity(self, data, **kwargs):
+        return _coerce_quantity_to_int(data)
+
 
 class SmartOrderSchema(Schema):
     apikey = fields.Str(required=True, validate=validate.Length(min=1, max=256))
@@ -60,6 +80,10 @@ class SmartOrderSchema(Schema):
         validate=validate.Range(min=0, error="Disclosed quantity must be a non-negative integer."),
     )
 
+    @post_load
+    def coerce_quantity(self, data, **kwargs):
+        return _coerce_quantity_to_int(data)
+
 
 class ModifyOrderSchema(Schema):
     apikey = fields.Str(required=True, validate=validate.Length(min=1, max=256))
@@ -87,6 +111,10 @@ class ModifyOrderSchema(Schema):
         validate=validate.Range(min=0, error="Trigger price must be a non-negative number."),
     )
     is_amo = fields.Bool(missing=False)  # Optional: True for After Market Orders (AMO)
+
+    @post_load
+    def coerce_quantity(self, data, **kwargs):
+        return _coerce_quantity_to_int(data)
 
 
 class CancelOrderSchema(Schema):
@@ -129,6 +157,10 @@ class BasketOrderItemSchema(Schema):
         validate=validate.Range(min=0, error="Disclosed quantity must be a non-negative integer."),
     )
 
+    @post_load
+    def coerce_quantity(self, data, **kwargs):
+        return _coerce_quantity_to_int(data)
+
 
 class BasketOrderSchema(Schema):
     apikey = fields.Str(required=True, validate=validate.Length(min=1, max=256))
@@ -167,6 +199,10 @@ class SplitOrderSchema(Schema):
         missing=0,
         validate=validate.Range(min=0, error="Disclosed quantity must be a non-negative integer."),
     )
+
+    @post_load
+    def coerce_quantity(self, data, **kwargs):
+        return _coerce_quantity_to_int(data)
 
 
 class OptionsOrderSchema(Schema):
