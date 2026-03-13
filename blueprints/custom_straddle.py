@@ -30,7 +30,10 @@ def simulate():
         if not broker:
             return jsonify({"status": "error", "message": "Broker not set in session"}), 400
 
-        login_username = session["user"]
+        login_username = session.get("user")
+        if not login_username:
+            return jsonify({"status": "error", "message": "Authentication required"}), 401
+
         auth_token = get_auth_token(login_username)
         if auth_token is None:
             return jsonify({"status": "error", "message": "Authentication required"}), 401
