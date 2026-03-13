@@ -381,7 +381,8 @@ class MarketDataService:
 
             if not validation_result.valid:
                 self.metrics["validation_errors"] += 1
-                logger.warning(f"Data validation failed: {validation_result.error}")
+                symbol_key = f"{data.get('exchange', '?')}:{data.get('symbol', '?')}"
+                logger.warning(f"Data validation failed for {symbol_key}: {validation_result.error}")
                 return False
 
             if validation_result.warnings:

@@ -14,6 +14,9 @@ EXPIRY = "17MAR26"
 STRIKE_COUNT = 15
 WARMUP_WAIT = 5  # seconds — adjust if needed
 
+# Optional side filter: None = all strikes, "otm" = ATM + OTM only, "itm" = ATM + ITM only
+SIDE = "otm"
+
 
 # -------------------------------------------------------
 # Get available expiry dates for NIFTY
@@ -36,16 +39,22 @@ print()
 
 def fetch_chain(label: str) -> float:
     """Fetch option chain, print summary, and return elapsed seconds."""
+    kwargs = {}
+    if SIDE is not None:
+        kwargs["side"] = SIDE  # Handled server-side; not a native SDK param
+
     t = time.perf_counter()
     chain = client.optionchain(
         underlying=UNDERLYING,
         exchange=EXCHANGE,
         expiry_date=EXPIRY,
         strike_count=STRIKE_COUNT,
+        **kwargs,
     )
     elapsed = time.perf_counter() - t
 
-    print(f"[{label}] NIFTY Option Chain fetched in {elapsed:.3f}s")
+    side_label = f" [{SIDE.upper()} only]" if SIDE else ""
+    print(f"[{label}]{side_label} NIFTY Option Chain fetched in {elapsed:.3f}s")
     print("-" * 50)
 
     if chain["status"] == "success":

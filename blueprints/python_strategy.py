@@ -459,6 +459,13 @@ def start_strategy_process(strategy_id):
             subprocess_args["stderr"] = subprocess.STDOUT
             subprocess_args["cwd"] = str(Path.cwd())
 
+            # Inject STRATEGY_NAME from the UI-provided name so the script picks
+            # it up via apply_env_overrides(); falls back to its own hardcoded
+            # value when run standalone in a terminal (env var absent).
+            process_env = os.environ.copy()
+            process_env["STRATEGY_NAME"] = config["name"]
+            subprocess_args["env"] = process_env
+
             # Start the process
             # Use Python unbuffered mode for real-time output
             cmd = [get_python_executable(), "-u", str(file_path.absolute())]
@@ -1220,15 +1227,23 @@ def get_strategy_log_files(strategy_id: str) -> list:
         except Exception as e:
             logger.warning(f"Error collecting log files for pattern '{pattern}' in '{directory}': {e}")
 
-    # --- Collect log files from LOGS_DIR and CWD ---
+    # --- Collect log files from LOGS_DIR, CWD, and strategies/scripts/logs ---
     search_dirs = [LOGS_DIR]
     cwd = Path.cwd()
     if cwd.resolve() != LOGS_DIR.resolve():
         search_dirs.append(cwd)
+    # StrategyLogger writes files here using STRATEGY_NAME as the prefix
+    strategy_scripts_logs = STRATEGIES_DIR / "logs"
+    if strategy_scripts_logs.exists() and strategy_scripts_logs.resolve() not in {d.resolve() for d in search_dirs}:
+        search_dirs.append(strategy_scripts_logs)
 
     patterns = [f"{strategy_id}.log", f"{strategy_id}_*.log"]
     if base_name != strategy_id:
         patterns.extend([f"{base_name}.log", f"{base_name}_*.log"])
+    # Also search by display name (STRATEGY_NAME in the script matches config "name")
+    display_name = STRATEGY_CONFIGS.get(strategy_id, {}).get("name", "")
+    if display_name and display_name != base_name and display_name != strategy_id:
+        patterns.extend([f"{display_name}.log", f"{display_name}_*.log"])
 
     for directory in search_dirs:
         for pattern in patterns:
@@ -2324,22 +2339,30 @@ def api_get_log_content(strategy_id, log_name):
 
     # Verify the log file belongs to this strategy.
     # Accept files whose name starts with the full strategy_id OR the base name
-    # so that user-created files (e.g. {base_name}_{run_ts}_minimal.log) are served.
+    # OR the strategy display name (used by StrategyLogger as file prefix).
+    display_name = STRATEGY_CONFIGS.get(strategy_id, {}).get("name", "")
     valid_prefix = log_name.startswith(f"{strategy_id}_") or \
                    log_name == f"{strategy_id}.log" or \
                    log_name.startswith(f"{base_name}_") or \
-                   log_name == f"{base_name}.log"
+                   log_name == f"{base_name}.log" or \
+                   (bool(display_name) and (
+                       log_name.startswith(f"{display_name}_") or
+                       log_name == f"{display_name}.log"
+                   ))
     if not valid_prefix:
         return jsonify(
             {"status": "error", "message": "Log file does not belong to this strategy"}
         ), 403
 
-    # Search for the log file in LOGS_DIR first, then CWD.
+    # Search for the log file in LOGS_DIR, CWD, and strategies/scripts/logs.
     # Only paths within an allowed directory are accepted (no traversal).
     allowed_dirs = [LOGS_DIR]
     cwd = Path.cwd()
     if cwd.resolve() != LOGS_DIR.resolve():
         allowed_dirs.append(cwd)
+    strategy_scripts_logs = STRATEGIES_DIR / "logs"
+    if strategy_scripts_logs.exists() and strategy_scripts_logs.resolve() not in {d.resolve() for d in allowed_dirs}:
+        allowed_dirs.append(strategy_scripts_logs)
 
     log_path = None
     for directory in allowed_dirs:

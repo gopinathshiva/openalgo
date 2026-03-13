@@ -150,9 +150,18 @@ def get_margin_data(auth_token):
         except Exception as e:
             logger.error(f"Error fetching positions for PnL: {e}")
 
+        # Calculate live balance (liquid cash without collateral)
+        total_live_balance = sum(
+            [
+                margin_data["data"]["commodity"]["available"]["live_balance"],
+                margin_data["data"]["equity"]["available"]["live_balance"],
+            ]
+        )
+
         # Construct and return the processed margin data
         processed_margin_data = {
             "availablecash": f"{total_available_margin:.2f}",
+            "availableliquidcash": f"{total_live_balance:.2f}",
             "collateral": f"{total_collateral:.2f}",
             "m2munrealized": f"{total_unrealised:.2f}",
             "m2mrealized": f"{total_realised:.2f}",

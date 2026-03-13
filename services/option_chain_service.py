@@ -255,7 +255,8 @@ def get_option_symbols_for_chain(
 
 
 def get_option_chain(
-    underlying: str, exchange: str, expiry_date: str, strike_count: int, api_key: str
+    underlying: str, exchange: str, expiry_date: str, strike_count: int, api_key: str,
+    side: str | None = None,
 ) -> tuple[bool, dict[str, Any], int]:
     """
     Main function to get option chain data.
@@ -420,13 +421,24 @@ def get_option_chain(
         )
 
         # Step 7: Build list of symbols for multiquotes
+        # When side filter is active, skip fetching quotes for the excluded side —
+        # this reduces the number of API/broker calls and is the main performance gain.
+        side_upper = side.upper() if side else None
+
+        def _side_wanted(label: str) -> bool:
+            """Return True if this option side should be fetched given the side filter."""
+            if not side_upper:
+                return True
+            label = (label or "").upper()
+            return label == "ATM" or label.startswith(side_upper)
+
         symbols_to_fetch = []
         for item in chain_symbols:
-            if item["ce"]["exists"]:
+            if item["ce"]["exists"] and _side_wanted(item["ce"]["label"]):
                 symbols_to_fetch.append(
                     {"symbol": item["ce"]["symbol"], "exchange": options_exchange}
                 )
-            if item["pe"]["exists"]:
+            if item["pe"]["exists"] and _side_wanted(item["pe"]["label"]):
                 symbols_to_fetch.append(
                     {"symbol": item["pe"]["symbol"], "exchange": options_exchange}
                 )
@@ -538,7 +550,7 @@ def get_option_chain(
 
             # CE data (label inside CE object)
             ce_symbol = item["ce"]["symbol"]
-            if item["ce"]["exists"]:
+            if item["ce"]["exists"] and _side_wanted(item["ce"]["label"]):
                 ce_quote = quotes_map.get(ce_symbol, {})
                 strike_data["ce"] = {
                     "symbol": ce_symbol,
@@ -560,7 +572,7 @@ def get_option_chain(
 
             # PE data (label inside PE object)
             pe_symbol = item["pe"]["symbol"]
-            if item["pe"]["exists"]:
+            if item["pe"]["exists"] and _side_wanted(item["pe"]["label"]):
                 pe_quote = quotes_map.get(pe_symbol, {})
                 strike_data["pe"] = {
                     "symbol": pe_symbol,
