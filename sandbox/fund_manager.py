@@ -106,6 +106,7 @@ class FundManager:
             # Return fund details
             return {
                 "availablecash": float(funds.available_balance),
+                "availableliquidcash": float(funds.available_balance),  # No collateral in sandbox, liquid cash equals available cash
                 "collateral": 0.00,  # No collateral in sandbox
                 "m2munrealized": float(funds.unrealized_pnl),
                 "m2mrealized": float(
